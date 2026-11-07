@@ -25,6 +25,9 @@ Deal data rooms (M&A, fundraising, legal) now let outside AI agents in. Datasite
    ```bash
    ./run.sh
    ```
+   On Windows PowerShell, use `.\run.ps1` instead. It loads `.env`, builds the
+   dashboard, and starts the gateway, party runtime, and frontend dev server in
+   the background. Open http://127.0.0.1:5173; server logs are in `logs/`.
 3. Open http://localhost:8000.
 
 Without `.env` it still works: the vault agent answers with local search instead of Bedrock. The dashboard header shows which one is active.

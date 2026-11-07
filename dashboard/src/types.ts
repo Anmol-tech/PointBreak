@@ -1,4 +1,5 @@
 export type Decision = 'allowed' | 'denied' | 'alert' | 'info'
+export type ActionHandler = (label: string, action: () => Promise<unknown>) => Promise<void>
 
 export interface VaultEvent {
   id: number
