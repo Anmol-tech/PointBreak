@@ -4,6 +4,7 @@ import asyncio
 import json
 from urllib.parse import parse_qs
 
+import httpx
 import jwt
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from common.config import ROOT, issuer_for, load
+from gateway.bedrock import BedrockError, BedrockWriter
+from gateway.demo import SCENARIOS, DemoRunner
 from gateway.identity import AuthError, Identity
 from gateway.protect import Masker, embed, extract, match_answers, roster_names
 from gateway.store import MemoryStore
@@ -25,6 +28,8 @@ store = MemoryStore()
 vault = VaultAgent(ROOT / "dataroom", cfg["max_snippets"], cfg["max_snippet_chars"])
 masker = Masker(roster_names(vault))
 identity = Identity(cfg, store)
+writer = BedrockWriter(cfg)
+demo = DemoRunner()
 
 app = FastAPI(title="VendorVault gateway")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -214,6 +219,15 @@ def call_tool(agent: dict, name: str, args: dict) -> dict:
 
     result = vault.answer(question, folders)
     text = masker.mask(result["answer"])
+    engine = "local search"
+    if result["citations"] and writer.enabled:
+        try:
+            # Excerpts are masked before the model sees them, so it can't leak personal data.
+            excerpts = [(c["source"], masker.mask(vault.context(c["section_id"]))) for c in result["citations"]]
+            text = masker.mask(writer.compose(question, excerpts))
+            engine = f"{writer.label} on Bedrock"
+        except BedrockError as e:
+            engine = f"local search (Bedrock unavailable: {e})"
     section_ids = [c["section_id"] for c in result["citations"]]
     if section_ids:
         store.reveal(party_name, section_ids, agent_id)
@@ -221,7 +235,7 @@ def call_tool(agent: dict, name: str, args: dict) -> dict:
     store.log(kind="call", decision="allowed", party=party_name, agent=agent_id,
               chain=identity.chain_label(agent_id), tool=name, question=question, answer=text,
               sources=[c["source"] for c in result["citations"]],
-              reason=f"answered with {len(section_ids)} masked excerpt(s); fingerprint {agent['fingerprint']}")
+              reason=f"answered from {len(section_ids)} masked excerpt(s) by {engine}; fingerprint {agent['fingerprint']}")
     check_coverage(party_name)
     return tool_text(embed(text, agent["fingerprint"]))
 
@@ -266,7 +280,8 @@ async def mcp(request: Request):
                 responses.append(rpc_result(msg_id, deny(agent_id, party, params.get("name"), a["error"],
                                                          (params.get("arguments") or {}).get("question"))))
             else:
-                responses.append(rpc_result(msg_id, call_tool(a["agent"], params.get("name"), params.get("arguments") or {})))
+                result = await run_in_threadpool(call_tool, a["agent"], params.get("name"), params.get("arguments") or {})
+                responses.append(rpc_result(msg_id, result))
             continue
         if "error" in a:
             responses.append(rpc_error(msg_id, -32001, f"VendorVault: {a['error']}"))
@@ -322,7 +337,23 @@ def state():
             "agents": [agent_view(a) for a in store.agents.values()],
             "folders": folders,
             "events": store.events[-200:],
+            "demo": demo.status(),
+            "answer_engine": f"{writer.label} on Bedrock" if writer.enabled else "local search",
         }
+
+
+def _bump():
+    with store.lock:
+        store.bump()
+
+
+@app.post("/api/demo/{name}")
+def run_demo(name: str):
+    if name not in SCENARIOS:
+        return JSONResponse({"error": f"unknown scenario {name}"}, status_code=404)
+    if not demo.start(name, _bump):
+        return JSONResponse({"error": f"{demo.running} is still running"}, status_code=409)
+    return JSONResponse({"started": name}, status_code=202)
 
 
 @app.post("/api/agents/{agent_id}/revoke")
@@ -393,6 +424,11 @@ def reset():
     store.reset()
     identity.jwks_cache.clear()
     invite_parties()
+    demo.last = None
+    try:  # also forget the party side's agents and re-enable its IdPs
+        httpx.post(f"{cfg['party_sim_url']}/reset", timeout=3)
+    except httpx.HTTPError:
+        pass
     return {"reset": True}
 
 

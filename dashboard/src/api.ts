@@ -19,6 +19,7 @@ export const api = {
     post(`/api/parties/${encodeURIComponent(name)}/folders`, { folders }),
   trace: (text: string) => post<{ matches: TraceMatch[] }>('/api/trace', { text }),
   reset: () => post('/api/reset'),
+  runDemo: (name: string) => post(`/api/demo/${name}`),
 }
 
 /** Live gateway state: refetches whenever the server-sent event stream reports a new version. */

@@ -11,7 +11,8 @@ import sys
 import time
 
 GATEWAY, PROXY = "http://127.0.0.1:8100", "http://127.0.0.1:9101"
-os.environ.update(GATEWAY_URL=GATEWAY, PARTY_SIM_URL=PROXY, NO_COLOR="1")
+# VAULT_LLM=off keeps answers deterministic even if a Bedrock key is loaded in this shell.
+os.environ.update(GATEWAY_URL=GATEWAY, PARTY_SIM_URL=PROXY, NO_COLOR="1", VAULT_LLM="off")
 
 import httpx  # noqa: E402
 import jwt  # noqa: E402

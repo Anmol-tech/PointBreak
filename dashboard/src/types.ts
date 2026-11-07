@@ -54,6 +54,12 @@ export interface Folder {
   shared_with: string[]
 }
 
+export interface DemoStatus {
+  running: string | null
+  last: { name: string; ok: boolean; message: string; seconds: number } | null
+  scenarios: Record<string, string>
+}
+
 export interface VaultState {
   deal: string
   version: number
@@ -62,6 +68,8 @@ export interface VaultState {
   agents: Agent[]
   folders: Folder[]
   events: VaultEvent[]
+  demo: DemoStatus
+  answer_engine: string
 }
 
 export interface TraceMatch {

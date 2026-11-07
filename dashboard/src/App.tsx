@@ -1,6 +1,7 @@
 import { api, useVaultState } from './api'
 import { AgentTree } from './components/AgentTree'
 import { DealSetup } from './components/DealSetup'
+import { DemoControls } from './components/DemoControls'
 import { LeakTracer } from './components/LeakTracer'
 import { PartiesPanel } from './components/PartiesPanel'
 import { QAFeed } from './components/QAFeed'
@@ -10,8 +11,8 @@ export default function App() {
   const { state, connected } = useVaultState()
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-slate-800 bg-slate-950/80 px-6 py-3 backdrop-blur">
+    <div className="flex min-h-full flex-col lg:h-full">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 bg-slate-950/80 px-6 py-3 backdrop-blur">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/15 ring-1 ring-emerald-500/40">
             <svg viewBox="0 0 24 24" className="h-4 w-4 text-emerald-300" fill="none" stroke="currentColor" strokeWidth="2.2">
@@ -26,7 +27,13 @@ export default function App() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
+          {state && <DemoControls demo={state.demo} />}
+          {state && (
+            <span className="hidden text-[11px] text-slate-500 xl:inline" title="What writes the vault agent's answers">
+              Answers: <span className="text-slate-300">{state.answer_engine}</span>
+            </span>
+          )}
           <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
             <span className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-emerald-400' : 'bg-slate-600'}`} />
             {connected ? 'live' : 'connecting'}
@@ -40,16 +47,16 @@ export default function App() {
           Waiting for the gateway on :8000…
         </div>
       ) : (
-        <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 p-4 lg:grid-cols-12">
-          <div className="flex min-h-0 flex-col gap-4 lg:col-span-3">
+        <main className="grid flex-1 grid-cols-1 gap-4 p-4 lg:min-h-0 lg:grid-cols-12">
+          <div className="flex flex-col gap-4 lg:col-span-3 lg:min-h-0">
             <PartiesPanel state={state} />
             <DealSetup state={state} />
           </div>
-          <div className="flex min-h-0 flex-col gap-4 lg:col-span-4">
+          <div className="flex flex-col gap-4 lg:col-span-4 lg:min-h-0">
             <AgentTree state={state} />
             <LeakTracer />
           </div>
-          <div className="flex min-h-0 flex-col lg:col-span-5">
+          <div className="flex flex-col lg:col-span-5 lg:min-h-0">
             <QAFeed state={state} />
           </div>
         </main>

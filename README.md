@@ -17,22 +17,24 @@ Deal data rooms (M&A, fundraising, legal) now let outside AI agents in. Datasite
 | Every call | signature · expiry · fresh DPoP proof · whole chain active · tool allowed · folder shared · company not locked |
 
 ## Run it
-```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-(cd dashboard && npm install && npm run build)
-```
-Terminal 1, party side (BuyerCo/RivalBid IdPs + agent key holder):
-```bash
-.venv/bin/python -m uvicorn party.proxy:app --port 9001
-```
-Terminal 2, VendorVault gateway + dashboard at http://localhost:8000:
-```bash
-.venv/bin/python -m uvicorn gateway.app:app --port 8000
-```
+1. Put your Bedrock API key in `.env` (git ignores it):
+   ```
+   AWS_BEARER_TOKEN_BEDROCK='bedrock-api-key-...'
+   ```
+2. Start everything (installs dependencies the first time, builds the dashboard, starts both servers):
+   ```bash
+   ./run.sh
+   ```
+3. Open http://localhost:8000.
+
+Without `.env` it still works: the vault agent answers with local search instead of Bedrock. The dashboard header shows which one is active.
+
+**Vault agent answers:** written by **Amazon Nova Pro on Bedrock** (`vault_llm` in `config.json`). Excerpts are masked *before* the model sees them, and any Bedrock error falls back to local search.
+
 Dashboard with hot reload while editing: `npm --prefix dashboard run dev` → http://localhost:5173
 
 ## Agents
-- **OpenCode:** `opencode.json` registers `vendorvault` → `http://localhost:9001/agents/opencode/mcp` (acts as `alice@buyerco.com`). Check with `opencode mcp list`. Needs a working model provider (`opencode auth login`).
+- **OpenCode on Bedrock:** `opencode.json` sets Claude Sonnet 4.6 on Amazon Bedrock (us-east-1) and registers `vendorvault` → `http://localhost:9001/agents/opencode/mcp` (acts as `alice@buyerco.com`). In a terminal: `set -a; source .env; set +a`, then `opencode`. The hackathon AWS account only allows certain models (Sonnet 4.6, Sonnet 5, Haiku 4.5, Nova Pro, Nova 2 Lite).
 - **Claude Code (same gateway, no changes):**
   ```bash
   claude --mcp-config '{"mcpServers":{"vendorvault":{"type":"http","url":"http://localhost:9001/agents/opencode/mcp"}}}'
@@ -42,6 +44,8 @@ Dashboard with hot reload while editing: `npm --prefix dashboard run dev` → ht
 Agents never hold a key or token: the party runtime on :9001 holds keys and signs every request.
 
 ## 2-minute demo
+Every step can run from the dashboard's header buttons (1–4); the commands below do the same from a terminal.
+
 1. **Team:** `python -m party.runner`. Alice's orchestrator gets a key-bound token from an ID-JAG and spawns legal + finance sub-agents; the dashboard tree shows the delegation chain.
 2. **No document downloads:** the legal agent gets cited, masked excerpts; `get_document` is blocked with "documents never leave the vault"; Board Minutes is blocked.
 3. **Stolen token:** `python -m scripts.stolen_token_attack` → rejected without the agent's key, and rejected with the attacker's own key.
@@ -49,7 +53,7 @@ Agents never hold a key or token: the party runtime on :9001 holds keys and sign
 5. **Leak trace:** `python -m scripts.leak_demo`, or paste text into the dashboard's Leak tracer → "legal-agent ← buyer-orchestrator ← alice@buyerco.com ← BuyerCo".
 6. **Revoke mid-task:** click Revoke on an agent → its next call is blocked, its siblings keep working; "Revoke branch" cascades to sub-agents.
 
-Use **Reset demo** on the dashboard (and `curl -X POST localhost:9001/reset`) between runs.
+Use **Reset demo** on the dashboard between runs (it resets both the gateway and the party side).
 
 ## Tests
 ```bash

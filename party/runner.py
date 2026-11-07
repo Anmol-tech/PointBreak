@@ -6,32 +6,24 @@ Usage: python -m party.runner [--pause SECONDS]
 import argparse
 import time
 
-from party.client import McpAgent, PartyError, create_root, say, spawn
+from party.client import PROXY_URL, McpAgent, create_root, say, spawn
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--pause", type=float, default=1.5, help="seconds between steps (for live demos)")
-    args = ap.parse_args()
-
+def run_team(pause: float = 1.5, proxy: str = PROXY_URL) -> str:
     def step(title):
         print(f"\n— {title}")
-        time.sleep(args.pause)
+        time.sleep(pause)
 
     step("alice@buyerco.com starts BuyerCo's orchestrator (ID-JAG from BuyerCo's IdP → DPoP-bound token)")
-    try:
-        create_root("BuyerCo", "alice@buyerco.com", "buyer-orchestrator")
-    except PartyError as e:
-        say("buyer-orchestrator", str(e), denied=True)
-        return
+    create_root("BuyerCo", "alice@buyerco.com", "buyer-orchestrator", proxy=proxy)
 
     step("orchestrator spawns specialist sub-agents with narrower access (token exchange)")
-    spawn("buyer-orchestrator", "legal-agent", folders=["Contracts", "Customers"])
-    spawn("buyer-orchestrator", "finance-agent", folders=["Financials"])
+    spawn("buyer-orchestrator", "legal-agent", folders=["Contracts", "Customers"], proxy=proxy)
+    spawn("buyer-orchestrator", "finance-agent", folders=["Financials"], proxy=proxy)
     say("legal-agent", "identity: legal-agent ← buyer-orchestrator ← alice@buyerco.com ← BuyerCo (Contracts, Customers)")
     say("finance-agent", "identity: finance-agent ← buyer-orchestrator ← alice@buyerco.com ← BuyerCo (Financials)")
 
-    legal, finance = McpAgent("legal-agent"), McpAgent("finance-agent")
+    legal, finance = McpAgent("legal-agent", proxy), McpAgent("finance-agent", proxy)
     legal.initialize()
     finance.initialize()
 
@@ -49,8 +41,20 @@ def main():
 
     step("finance agent tries Contracts, which only the legal agent was given")
     say("finance-agent", *finance.tool("ask_question", question="Change of control terms", folder="Contracts"))
+    return "BuyerCo team created: orchestrator, legal-agent and finance-agent asked questions; 3 requests blocked"
 
-    print("\nDone. Revoke an agent on the dashboard, then re-run a call to see it blocked.")
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--pause", type=float, default=1.5, help="seconds between steps (for live demos)")
+    args = ap.parse_args()
+    from party.client import PartyError
+    try:
+        print("\n" + run_team(args.pause))
+    except PartyError as e:
+        say("buyer-orchestrator", str(e), denied=True)
+        return
+    print("Revoke an agent on the dashboard, then re-run a call to see it blocked.")
 
 
 if __name__ == "__main__":

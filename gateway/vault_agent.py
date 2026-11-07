@@ -82,6 +82,14 @@ class VaultAgent:
     def index(self, folders: list[str]) -> list[dict]:
         return [d for d in self.docs.values() if d["folder"] in folders]
 
+    def context(self, section_id: str, max_chars: int = 900) -> str:
+        """Longer excerpt handed to the answer-writing model; tables still only as totals."""
+        section = next(s for s in self.sections if s.id == section_id)
+        prose = " ".join(l.strip() for l in section.body.splitlines() if l.strip() and not l.strip().startswith("|"))
+        table = [l for l in section.body.splitlines() if l.strip().startswith("|")]
+        text = prose[:max_chars]
+        return " ".join(p for p in (text, summarize_table(table) if table else "") if p)
+
     def _snippet(self, section: Section) -> str:
         prose, table = [], []
         for line in section.body.splitlines():

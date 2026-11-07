@@ -9,6 +9,12 @@
   "coverage_lock": 0.7,
   "max_snippets": 2,
   "max_snippet_chars": 300,
+  "vault_llm": {
+    "enabled": true,
+    "model": "us.amazon.nova-pro-v1:0",
+    "label": "Amazon Nova Pro",
+    "region": "us-east-1"
+  },
   "parties": {
     "BuyerCo": {
       "users": ["alice@buyerco.com", "bob@buyerco.com"],
