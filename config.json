@@ -1,0 +1,29 @@
+{
+  "gateway_url": "http://127.0.0.1:8000",
+  "party_sim_url": "http://127.0.0.1:9001",
+  "audience": "https://vendorvault.local",
+  "deal": "project-falcon",
+  "token_ttl_seconds": 900,
+  "id_jag_ttl_seconds": 300,
+  "coverage_alert": 0.5,
+  "coverage_lock": 0.7,
+  "max_snippets": 2,
+  "max_snippet_chars": 300,
+  "parties": {
+    "BuyerCo": {
+      "users": ["alice@buyerco.com", "bob@buyerco.com"],
+      "folders": ["Contracts", "Customers", "Financials", "HR"],
+      "scope": ["vault:list", "vault:ask"]
+    },
+    "RivalBid": {
+      "users": ["mallory@rivalbid.com"],
+      "folders": ["Contracts", "Financials"],
+      "scope": ["vault:list", "vault:ask"]
+    }
+  },
+  "opencode_agent": {
+    "party": "BuyerCo",
+    "user": "alice@buyerco.com",
+    "name": "opencode"
+  }
+}

@@ -1,0 +1,422 @@
+"""VendorVault gateway: agent identity (ID-JAG + DPoP + delegation), MCP tools, owner API."""
+
+import asyncio
+import json
+from urllib.parse import parse_qs
+
+import jwt
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
+
+from common.config import ROOT, issuer_for, load
+from gateway.identity import AuthError, Identity
+from gateway.protect import Masker, embed, extract, match_answers, roster_names
+from gateway.store import MemoryStore
+from gateway.vault_agent import VaultAgent
+
+JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
+
+cfg = load()
+store = MemoryStore()
+vault = VaultAgent(ROOT / "dataroom", cfg["max_snippets"], cfg["max_snippet_chars"])
+masker = Masker(roster_names(vault))
+identity = Identity(cfg, store)
+
+app = FastAPI(title="VendorVault gateway")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+TOOLS = [
+    {
+        "name": "list_folders",
+        "description": "List the data-room folders and document outlines shared with you (titles and section headings only).",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "ask_question",
+        "description": "Ask a due-diligence question. The seller's vault agent answers with short cited excerpts; documents are never released.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "Your question about the deal documents"},
+                "folder": {"type": "string", "description": "Optional folder to search, e.g. Contracts"},
+            },
+            "required": ["question"],
+        },
+    },
+    {
+        "name": "get_document",
+        "description": "Download a full document from the data room.",
+        "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+    },
+    {
+        "name": "export_all",
+        "description": "Export every document in the data room.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+]
+TOOL_SCOPE = {"list_folders": "vault:list", "ask_question": "vault:ask",
+              "get_document": "vault:read-raw", "export_all": "vault:export"}
+
+
+def invite_parties():
+    for name, p in cfg["parties"].items():
+        store.add_party(name, issuer_for(cfg, name), p["folders"], p["scope"])
+
+
+invite_parties()
+
+
+def endpoint_url(request: Request) -> str:
+    # DPoP proofs are checked against the gateway's canonical URL, not the Host header.
+    return f"{cfg['gateway_url']}{request.url.path}"
+
+
+# --- coverage ---------------------------------------------------------------
+
+def coverage(party_name: str) -> dict:
+    party = store.parties[party_name]
+    total = {s.id for s in vault.sections_in(party["folders"])}
+    revealed = store.revealed.get(party_name, {})
+    seen = set(revealed) & total
+    per_agent: dict[str, set] = {}
+    for sid in seen:
+        for agent_id in revealed[sid]:
+            per_agent.setdefault(agent_id, set()).add(sid)
+    # Many agents each seeing a small slice looks like a scrape split up to dodge per-agent limits.
+    biggest_share = max((len(s) for s in per_agent.values()), default=0) / len(seen) if seen else 0
+    split = len(per_agent) >= 3 and len(seen) >= 5 and biggest_share <= 0.5
+    return {
+        "coverage": round(len(seen) / len(total), 3) if total else 0.0,
+        "revealed": len(seen),
+        "total": len(total),
+        "agents_contributing": len(per_agent),
+        "agent_sections": {a: len(s) for a, s in per_agent.items()},
+        "split_scraping": split,
+    }
+
+
+def check_coverage(party_name: str):
+    party = store.parties[party_name]
+    cov = coverage(party_name)
+    pct = cov["coverage"]
+    split_note = f"; split scraping across {cov['agents_contributing']} agents" if cov["split_scraping"] else ""
+    if pct >= cfg["coverage_lock"] and not party["locked"]:
+        reason = f"coverage {pct:.0%} reached the {cfg['coverage_lock']:.0%} limit{split_note}"
+        store.set_party_lock(party_name, True, reason)
+        store.log(kind="lock", decision="alert", party=party_name, agent=None, chain=[party_name],
+                  reason=f"Auto-locked {party_name}: {reason}")
+    elif pct >= cfg["coverage_alert"] and not party["alerted"]:
+        party["alerted"] = True
+        store.log(kind="alert", decision="alert", party=party_name, agent=None, chain=[party_name],
+                  reason=f"{party_name} has seen {pct:.0%} of its shared sections{split_note}")
+
+
+# --- OAuth token endpoint -----------------------------------------------------
+
+@app.post("/token")
+async def token(request: Request):
+    form = {k: v[0] for k, v in parse_qs((await request.body()).decode()).items()}
+    proof = request.headers.get("dpop", "")
+    url = endpoint_url(request)
+    grant = form.get("grant_type")
+    try:
+        if grant == JWT_BEARER:
+            # May fetch the party IdP's JWKS over the network, so keep it off the event loop.
+            agent, tok, ttl = await run_in_threadpool(identity.issue_root, form.get("assertion", ""), proof, url)
+            how = "root identity issued from the party's ID-JAG"
+        elif grant == TOKEN_EXCHANGE:
+            scope = form["scope"].split() if form.get("scope") else None
+            folders = json.loads(form["folders"]) if form.get("folders") else None
+            agent, tok, ttl = identity.issue_child(form.get("subject_token", ""), proof, form.get("actor_proof", ""),
+                                                   url, form.get("actor_name", ""), scope, folders)
+            how = "sub-agent identity issued by token exchange"
+        else:
+            raise AuthError(f"unsupported grant_type {grant}")
+    except AuthError as e:
+        store.log(kind="token", decision="denied", party=None, agent=form.get("actor_name"), chain=[],
+                  reason=f"Token refused: {e}")
+        return JSONResponse({"error": "invalid_grant", "error_description": str(e)}, status_code=400)
+    store.log(kind="token", decision="allowed", party=agent["party"], agent=agent["id"],
+              chain=identity.chain_label(agent["id"]), reason=how,
+              detail={"scope": agent["scope"], "folders": agent["folders"]})
+    return {"access_token": tok, "token_type": "DPoP", "expires_in": ttl,
+            "agent_id": agent["id"], "scope": " ".join(agent["scope"]), "folders": agent["folders"]}
+
+
+@app.get("/.well-known/jwks.json")
+def jwks():
+    return identity.jwks()
+
+
+# --- MCP endpoint -------------------------------------------------------------
+
+def rpc_result(msg_id, result):
+    return {"jsonrpc": "2.0", "id": msg_id, "result": result}
+
+
+def rpc_error(msg_id, code, message):
+    return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
+
+
+def tool_text(text: str, is_error: bool = False) -> dict:
+    return {"content": [{"type": "text", "text": text}], "isError": is_error}
+
+
+def unverified_agent(token: str) -> str | None:
+    try:
+        return jwt.decode(token, options={"verify_signature": False}).get("agent_id")
+    except jwt.PyJWTError:
+        return None
+
+
+def deny(agent_id, party, tool, reason, question=None):
+    store.log(kind="call", decision="denied", party=party, agent=agent_id,
+              chain=identity.chain_label(agent_id) if agent_id in store.agents else [],
+              tool=tool, question=question, reason=reason)
+    return tool_text(f"⛔ VendorVault denied: {reason}", is_error=True)
+
+
+def call_tool(agent: dict, name: str, args: dict) -> dict:
+    agent_id, party_name = agent["id"], agent["party"]
+    question = args.get("question")
+    if name not in TOOL_SCOPE:
+        return deny(agent_id, party_name, name, f"unknown tool {name}")
+    if name == "get_document":
+        return deny(agent_id, party_name, name, "documents never leave the vault. Use ask_question instead")
+    if name == "export_all":
+        return deny(agent_id, party_name, name, "bulk export is never allowed")
+    if TOOL_SCOPE[name] not in agent["scope"]:
+        return deny(agent_id, party_name, name, f"tool {name} is not allowed for this agent")
+
+    party = store.parties[party_name]
+    folders = [f for f in agent["folders"] if f in party["folders"]]
+
+    if name == "list_folders":
+        lines = [f"Folders shared with {agent['name']} ({party_name}). Outlines only; documents are not released."]
+        for d in vault.index(folders):
+            lines.append(f"- {d['folder']} / {d['title']}: " + "; ".join(d["headings"]))
+        store.log(kind="call", decision="allowed", party=party_name, agent=agent_id,
+                  chain=identity.chain_label(agent_id), tool=name, reason="outline only")
+        return tool_text("\n".join(lines))
+
+    question = (question or "").strip()
+    if not question:
+        return deny(agent_id, party_name, name, "question is empty")
+    if args.get("folder"):
+        wanted = {f.lower(): f for f in vault.folders()}.get(args["folder"].strip().lower(), args["folder"])
+        if wanted not in folders:
+            return deny(agent_id, party_name, name, f"folder '{wanted}' is not shared with this agent", question)
+        folders = [wanted]
+
+    result = vault.answer(question, folders)
+    text = masker.mask(result["answer"])
+    section_ids = [c["section_id"] for c in result["citations"]]
+    if section_ids:
+        store.reveal(party_name, section_ids, agent_id)
+    store.record_answer(agent_id, text)
+    store.log(kind="call", decision="allowed", party=party_name, agent=agent_id,
+              chain=identity.chain_label(agent_id), tool=name, question=question, answer=text,
+              sources=[c["source"] for c in result["citations"]],
+              reason=f"answered with {len(section_ids)} masked excerpt(s); fingerprint {agent['fingerprint']}")
+    check_coverage(party_name)
+    return tool_text(embed(text, agent["fingerprint"]))
+
+
+@app.post("/mcp")
+async def mcp(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(rpc_error(None, -32700, "parse error"))
+    batch = payload if isinstance(payload, list) else [payload]
+
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    proof = request.headers.get("dpop")
+    auth: dict = {}
+
+    def authenticate():
+        if not auth:
+            try:
+                if not token:
+                    raise AuthError("no agent identity presented")
+                agent, _ = identity.verify_access(token, proof, "POST", endpoint_url(request))
+                auth["agent"] = agent
+            except AuthError as e:
+                auth["error"] = str(e)
+        return auth
+
+    responses = []
+    for msg in batch:
+        method, msg_id = msg.get("method"), msg.get("id")
+        if msg_id is None:  # notifications need no reply
+            continue
+        if method == "ping":
+            responses.append(rpc_result(msg_id, {}))
+            continue
+        a = authenticate()
+        if method == "tools/call":
+            params = msg.get("params") or {}
+            if "error" in a:
+                agent_id = unverified_agent(token) if token else None
+                party = store.agents[agent_id]["party"] if agent_id in store.agents else None
+                responses.append(rpc_result(msg_id, deny(agent_id, party, params.get("name"), a["error"],
+                                                         (params.get("arguments") or {}).get("question"))))
+            else:
+                responses.append(rpc_result(msg_id, call_tool(a["agent"], params.get("name"), params.get("arguments") or {})))
+            continue
+        if "error" in a:
+            responses.append(rpc_error(msg_id, -32001, f"VendorVault: {a['error']}"))
+        elif method == "initialize":
+            requested = (msg.get("params") or {}).get("protocolVersion") or "2025-06-18"
+            responses.append(rpc_result(msg_id, {
+                "protocolVersion": requested,
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "vendorvault", "version": "0.1.0"},
+                "instructions": "Deal data room. Ask questions with ask_question; documents are never released.",
+            }))
+        elif method == "tools/list":
+            responses.append(rpc_result(msg_id, {"tools": TOOLS}))
+        else:
+            responses.append(rpc_error(msg_id, -32601, f"method {method} not found"))
+
+    if not responses:
+        return Response(status_code=202)
+    return JSONResponse(responses if isinstance(payload, list) else responses[0])
+
+
+@app.get("/mcp")
+def mcp_get():
+    return Response(status_code=405)
+
+
+# --- owner (seller) API -------------------------------------------------------
+
+def agent_view(a: dict) -> dict:
+    calls = sum(1 for e in store.events if e.get("agent") == a["id"] and e.get("kind") == "call")
+    seen = sum(1 for agents in store.revealed.get(a["party"], {}).values() if a["id"] in agents)
+    return {k: a[k] for k in ("id", "name", "party", "user", "parent", "status", "scope", "folders",
+                              "created", "revoked_reason", "fingerprint")} | {
+        "chain": identity.chain_label(a["id"]), "calls": calls, "sections_seen": seen}
+
+
+@app.get("/api/state")
+def state():
+    with store.lock:
+        parties = [{**p, **coverage(p["name"])} for p in store.parties.values()]
+        folders = []
+        for f in vault.folders():
+            folders.append({
+                "name": f,
+                "docs": [d["title"] for d in vault.docs.values() if d["folder"] == f],
+                "shared_with": [p["name"] for p in store.parties.values() if f in p["folders"]],
+            })
+        return {
+            "deal": cfg["deal"],
+            "version": store.version,
+            "thresholds": {"alert": cfg["coverage_alert"], "lock": cfg["coverage_lock"]},
+            "parties": parties,
+            "agents": [agent_view(a) for a in store.agents.values()],
+            "folders": folders,
+            "events": store.events[-200:],
+        }
+
+
+@app.post("/api/agents/{agent_id}/revoke")
+def revoke(agent_id: str):
+    if agent_id not in store.agents:
+        return JSONResponse({"error": "unknown agent"}, status_code=404)
+    ids = store.revoke_agent(agent_id, "revoked by data-room owner")
+    a = store.agents[agent_id]
+    extra = f" and {len(ids) - 1} sub-agent(s)" if len(ids) > 1 else ""
+    store.log(kind="revoke", decision="alert", party=a["party"], agent=agent_id,
+              chain=identity.chain_label(agent_id), reason=f"Owner revoked {a['name']}{extra}")
+    return {"revoked": ids}
+
+
+@app.post("/api/parties/{name}/lock")
+def lock_party(name: str):
+    store.set_party_lock(name, True, "locked by data-room owner")
+    store.log(kind="lock", decision="alert", party=name, agent=None, chain=[name],
+              reason=f"Owner locked every {name} agent out of the deal")
+    return {"locked": name}
+
+
+@app.post("/api/parties/{name}/unlock")
+def unlock_party(name: str):
+    store.set_party_lock(name, False, None)
+    store.log(kind="lock", decision="info", party=name, agent=None, chain=[name], reason=f"Owner unlocked {name}")
+    return {"unlocked": name}
+
+
+@app.post("/api/parties/{name}/folders")
+async def set_folders(name: str, request: Request):
+    body = await request.json()
+    folders = [f for f in body.get("folders", []) if f in vault.folders()]
+    with store.lock:
+        store.parties[name]["folders"] = folders
+        store.bump()
+    store.log(kind="share", decision="info", party=name, agent=None, chain=[name],
+              reason=f"Shared folders for {name}: {', '.join(folders) or 'none'}")
+    return {"folders": folders}
+
+
+@app.post("/api/trace")
+async def trace(request: Request):
+    text = (await request.json()).get("text", "")
+    matches = []
+    for fp in extract(text):
+        agent_id = store.fingerprints.get(fp)
+        if agent_id:
+            matches.append({"agent_id": agent_id, "chain": identity.chain_label(agent_id),
+                            "method": "invisible fingerprint", "confidence": 1.0})
+    if not matches:
+        for agent_id, score in sorted(match_answers(text, store.answers).items(), key=lambda x: -x[1]):
+            matches.append({"agent_id": agent_id, "chain": identity.chain_label(agent_id),
+                            "method": "text match with served answers", "confidence": score})
+    if matches:
+        top = matches[0]
+        store.log(kind="trace", decision="alert", party=store.agents[top["agent_id"]]["party"],
+                  agent=top["agent_id"], chain=top["chain"],
+                  reason=f"Leaked text traced to {' ← '.join(reversed(top['chain']))} ({top['method']})")
+    else:
+        store.log(kind="trace", decision="info", party=None, agent=None, chain=[],
+                  reason="Leak trace: no matching agent")
+    return {"matches": matches}
+
+
+@app.post("/api/reset")
+def reset():
+    store.reset()
+    identity.jwks_cache.clear()
+    invite_parties()
+    return {"reset": True}
+
+
+@app.get("/api/events/stream")
+async def stream(request: Request):
+    async def gen():
+        last, idle = -1, 0
+        while not await request.is_disconnected():
+            if store.version != last:
+                last, idle = store.version, 0
+                yield f"data: {json.dumps({'version': last})}\n\n"
+            else:
+                idle += 1
+                if idle % 40 == 0:
+                    yield ": keep-alive\n\n"
+            await asyncio.sleep(0.25)
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
+dist = ROOT / "dashboard" / "dist"
+if dist.exists():
+    app.mount("/", StaticFiles(directory=dist, html=True), name="dashboard")

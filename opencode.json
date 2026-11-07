@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "vendorvault": {
+      "type": "remote",
+      "url": "http://localhost:9001/agents/opencode/mcp",
+      "enabled": true
+    }
+  }
+}

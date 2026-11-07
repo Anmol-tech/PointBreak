@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-950 text-slate-200 antialiased;
+}
+
+@keyframes flash-in {
+  from {
+    background-color: rgb(16 185 129 / 0.18);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.flash-in {
+  animation: flash-in 1.2s ease-out;
+}
