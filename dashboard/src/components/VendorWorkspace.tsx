@@ -4,7 +4,7 @@ import type { ActionHandler, VendorAgent, VendorEntry, VendorTerms } from '../ty
 import { Icon } from './Icon'
 import { timeLabel } from './ui'
 
-const clean = (text: string) => text.replace(/[​‌﻿]/g, '').replace(/^⛔ VendorVault denied: /, '')
+const clean = (text: string) => text.replace(/[\u200b\u200c\ufeff]/g, '').replace(/^⛔ VendorVault denied: /, '')
 const ABILITY: Record<string, string> = { 'vault:ask': 'ask questions', 'vault:list': 'see the folder list' }
 
 function minutes(seconds: number) {
@@ -18,7 +18,7 @@ function statusTag(agent: VendorAgent) {
 }
 
 function entryTitle(e: VendorEntry) {
-  if (e.kind === 'onboard') return 'Connected our company login to Falcon'
+  if (e.kind === 'onboard') return 'Company login connected'
   if (e.kind === 'badge') {
     if (e.decision === 'denied') return `${e.agent} could not get a badge`
     return e.parent ? `${e.parent} created helper ${e.agent}` : `${e.agent} got a badge`
@@ -31,7 +31,7 @@ function entryTitle(e: VendorEntry) {
 }
 
 function entryBody(e: VendorEntry) {
-  if (e.kind === 'onboard') return `${e.reason ?? ''}. Falcon allows our agents to ask about ${e.folders?.join(', ') || 'nothing'}.`
+  if (e.kind === 'onboard') return `${e.reason ?? ''}. Allowed folders: ${e.folders?.join(', ') || 'none'}.`
   if (e.kind === 'badge') {
     if (e.decision === 'denied') return e.reason ?? ''
     const abilities = (e.scope ?? []).map((s) => ABILITY[s] ?? s).join(' and ')
@@ -66,8 +66,8 @@ function AgentRow({ agent, all, depth, currentName, pending, onUse, onAction }: 
           <div className="vendor-agent-actions">
             {statusTag(agent)}
             <div className="inline-actions">
-              <button type="button" className="button button-small" onClick={() => onUse(agent.name)}>Ask with this agent</button>
-              <button type="button" className="text-button" onClick={() => setAdding(!adding)}>{adding ? 'Cancel' : 'Add helper'}</button>
+              <button type="button" className="button button-small" disabled={pending || agent.status !== 'active'} onClick={() => onUse(agent.name)}>Ask with this agent</button>
+              <button type="button" className="text-button" disabled={pending || agent.status !== 'active'} onClick={() => setAdding(!adding)}>{adding ? 'Cancel' : 'Add helper'}</button>
             </div>
           </div>
         </div>
@@ -75,7 +75,7 @@ function AgentRow({ agent, all, depth, currentName, pending, onUse, onAction }: 
           <div className="helper-form">
             <label className="field-label" htmlFor={`helper-${agent.name}`}>Helper name</label>
             <input id={`helper-${agent.name}`} value={name} onChange={(e) => setName(e.target.value.replace(/\s+/g, '-'))} />
-            <span className="field-label">Give it only some of {agent.name}'s folders</span>
+            <span className="field-label">Choose the folders this helper needs</span>
             <div className="chip-row">
               {mine.map((f) => (
                 <label key={f} className="chip-check">
@@ -87,7 +87,7 @@ function AgentRow({ agent, all, depth, currentName, pending, onUse, onAction }: 
             <button
               type="button"
               className="button button-primary button-small"
-              disabled={pending || !name.trim()}
+              disabled={pending || !name.trim() || folders.length === 0}
               onClick={() => void onAction('Add helper', async () => { await vendorApi.addHelper(agent.name, name.trim(), folders); setAdding(false) })}
             >
               Create helper
@@ -114,6 +114,7 @@ function starterQuestion(access: VendorTerms | null | undefined) {
 
 export function VendorWorkspace({ party, pending, onAction }: { party: string; pending: boolean; onAction: ActionHandler }) {
   const { state, error, refresh } = useVendorState(party)
+  const [view, setView] = useState<'ask' | 'agents' | 'settings'>('ask')
   const [newUser, setNewUser] = useState('')
   const [user, setUser] = useState('')
   const [agentName, setAgentName] = useState('')
@@ -123,195 +124,75 @@ export function VendorWorkspace({ party, pending, onAction }: { party: string; p
   const [reply, setReply] = useState<{ text: string; denied: boolean } | null>(null)
   const [asking, setAsking] = useState(false)
 
-  if (error && !state) return <div className="error-notice" role="alert"><Icon name="alert" /><span>{error}. Is the vendor runtime running (./run.sh)?</span></div>
-  if (!state) return <div className="connecting-state"><h1>Connecting to {party}'s side…</h1></div>
+  if (error && !state) return <div className="error-notice" role="alert"><Icon name="alert" /><span>We couldn’t load {party}’s workspace. {error}</span></div>
+  if (!state) return <div className="vendor-loading" role="status"><span className="spinner" />Loading your company workspace…</div>
 
   const access = state.access
   const client = state.client
   const question = typed ?? starterQuestion(access)
-  const currentUser = user || state.users[0]
-  const suggested = agentName || `${currentUser.split('@')[0]}-agent`
-  const usable = state.agents
-  const current = usable.find((a) => a.name === askAs) ?? usable[0]
+  const currentUser = state.users.includes(user) ? user : state.users[0] || ''
+  const baseName = `${currentUser.split('@')[0] || 'vendor'}-agent`
+  let defaultName = baseName
+  for (let suffix = 2; state.agents.some((agent) => agent.name === defaultName); suffix++) defaultName = `${baseName}-${suffix}`
+  const suggested = agentName || defaultName
+  const current = state.agents.find((agent) => agent.name === askAs) ?? state.agents.find((agent) => agent.status === 'active') ?? state.agents[0]
   const history = [...state.history].reverse()
+  const accessOpen = access?.status === 'active' && !access.locked
+  const canAsk = accessOpen && current?.status === 'active'
+  const searchFolder = current?.granted_folders?.includes(folder) ? folder : ''
 
+  const update: ActionHandler = (label, action) => onAction(label, async () => { await action(); await refresh() })
+  function chooseAgent(name: string) { setAskAs(name); setFolder(''); setReply(null); setView('ask') }
   async function send(tool: string, args: Record<string, string>) {
-    if (!current) return
-    setAsking(true)
-    setReply(null)
-    try {
-      setReply(await vendorApi.ask(current.name, tool, args))
-      await refresh()
-    } catch (e) {
-      setReply({ text: e instanceof Error ? e.message : 'Request failed', denied: true })
-    } finally {
-      setAsking(false)
-    }
+    if (!current || asking) return
+    setAsking(true); setReply(null)
+    try { setReply(await vendorApi.ask(current.name, tool, args)); await refresh() }
+    catch (error) { setReply({ text: error instanceof Error ? error.message : 'Request failed. Try again.', denied: true }) }
+    finally { setAsking(false) }
   }
 
-  return (
-    <div className="vendor-grid">
-      <div className="vendor-column">
-        <section className="company-panel access-card">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">ACCESS {client.toUpperCase()} GAVE YOU</span>
-              <h3>{access?.purpose || 'Work not described'}</h3>
-            </div>
-            <span className={`tag ${access?.status === 'active' && !access.locked ? '' : 'tag-danger'}`}>
-              {access?.status === 'offboarded' ? 'Offboarded' : access?.locked ? 'Locked out' : access?.status === 'active' ? 'Active vendor' : 'Not connected'}
-            </span>
-          </div>
-          <dl className="access-terms">
-            <div><dt>Your agents may ask about</dt><dd>{access?.folders.join(', ') || 'nothing'}</dd></div>
-            <div><dt>They may</dt><dd>{(access?.scope ?? []).map((s) => ABILITY[s] ?? s).join(' and ') || 'nothing'}</dd></div>
-            <div><dt>They can never</dt><dd>download or export documents</dd></div>
-          </dl>
-          <p className="small muted vendor-copy">{client} set this when it onboarded you, based on the work you were hired for. Every agent and helper you start gets this much access or less.</p>
-        </section>
+  return <div className="vendor-workspace">
+    {error && <p className="company-warning" role="status"><Icon name="alert" />Connection interrupted. Showing the last available company state.</p>}
+    <section className="vendor-access-summary" aria-label="Your client access">
+      <div className="vendor-access-heading"><div><span className="eyebrow">ACCESS SHARED BY {client.toUpperCase()}</span><h2>{access?.purpose || 'Your client access'}</h2></div><span className={`tag ${accessOpen ? '' : 'tag-danger'}`}>{access?.status === 'offboarded' ? 'Offboarded' : access?.locked ? 'Access locked' : accessOpen ? 'Active vendor' : 'Not connected'}</span></div>
+      <div className="vendor-scope-line"><div className="vendor-folder-tags">{access?.folders.map((name) => <span key={name}><Icon name="folder" />{name}</span>)}{!access?.folders.length && <span>No folders shared</span>}</div><span className="vendor-files-note"><Icon name="lock" />Answers only. Original files stay with {client}.</span></div>
+      {!accessOpen && <p className="company-warning"><Icon name="alert" />{access?.lock_reason || (access?.status === 'offboarded' ? 'Your company has been offboarded. Contact your client to restore access.' : 'Your company needs active client access before agents can ask questions.')}</p>}
+    </section>
 
-        <section className="company-panel">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">STEP 1 · YOUR COMPANY LOGIN</span>
-              <h3>{party}'s identity provider</h3>
-            </div>
-            <span className={`tag ${state.issuing ? '' : 'tag-danger'}`}>{state.issuing ? 'Issuing agent badges' : 'Stopped'}</span>
-          </div>
-          <p className="small muted vendor-copy">
-            Your own login system vouches for your agents with a signed note (an ID-JAG). {client} only trusts {party} people
-            if this login vouches for them. {state.id_jags_issued} note{state.id_jags_issued === 1 ? '' : 's'} signed so far.
-          </p>
-          <button
-            type="button"
-            className={`button ${state.issuing ? 'button-danger' : 'button-primary'}`}
-            disabled={pending}
-            onClick={() => void onAction('Update company login', () => (state.issuing ? vendorApi.stopIssuing(party) : vendorApi.resumeIssuing(party)))}
-          >
-            {state.issuing ? 'Stop issuing badges for our agents' : 'Resume issuing badges'}
-          </button>
-          <p className="small muted vendor-copy">Stopping blocks new agents right away. Existing badges expire within 15 minutes, and {client} can stop them instantly.</p>
-          <label className="field-label" htmlFor="vendor-new-user">Employees who may run agents ({state.users.length})</label>
-          <div className="inline-field">
-            <input id="vendor-new-user" placeholder="new.person@company.com" value={newUser} onChange={(e) => setNewUser(e.target.value)} />
-            <button
-              type="button"
-              className="button"
-              disabled={pending || !newUser.includes('@')}
-              onClick={() => void onAction('Add employee', async () => { await vendorApi.addUser(party, newUser.trim()); setNewUser(''); await refresh() })}
-            >
-              Add employee
-            </button>
-          </div>
-        </section>
+    <nav className="vendor-workspace-nav" aria-label="Vendor workspace">
+      {([['ask', 'Ask questions', 'answer'], ['agents', 'Agents', 'agents'], ['settings', 'Company settings', 'key']] as const).map(([id, label, icon]) => <button type="button" key={id} aria-pressed={view === id} disabled={pending || asking} onClick={() => setView(id)}><Icon name={icon} />{label}{id === 'agents' && <span className="count">{state.agents.length}</span>}</button>)}
+    </nav>
 
-        <section className="company-panel">
-          <span className="eyebrow">STEP 2 · START AN AGENT</span>
-          <h3 className="vendor-h3">Sign in and send an agent into the data room</h3>
-          <label className="field-label" htmlFor="vendor-user">Employee</label>
-          <select id="vendor-user" value={currentUser} onChange={(e) => { setUser(e.target.value); setAgentName('') }}>
-            {state.users.map((u) => <option key={u} value={u}>{u}</option>)}
-          </select>
-          <label className="field-label" htmlFor="vendor-agent-name">Agent name</label>
-          <input id="vendor-agent-name" value={suggested} onChange={(e) => setAgentName(e.target.value.replace(/\s+/g, '-'))} />
-          <button
-            type="button"
-            className="button button-primary"
-            disabled={pending || !suggested.trim()}
-            onClick={() => void onAction('Start agent', async () => { await vendorApi.startAgent(party, currentUser, suggested.trim()); setAskAs(suggested.trim()) })}
-          >
-            <Icon name="key" />Sign in &amp; get a badge
-          </button>
-          <p className="small muted vendor-copy">The agent creates its own secret key. Its badge is locked to that key, so a copied badge is useless.</p>
-        </section>
+    {view === 'ask' && <div className="vendor-ask-workspace">
+      <section className="company-panel vendor-question-panel">
+        <div className="section-heading"><div><h2>Ask {client}’s vault</h2><p className="muted vendor-section-copy">Get a short answer from the information shared with your company.</p></div><Icon name="answer" /></div>
+        {!current ? <div className="vendor-first-agent"><span className="empty-icon"><Icon name="agents" /></span><h3>Start an agent to ask your first question.</h3><p>Your agent gets a verified identity and access limited to your company’s work.</p><button type="button" className="button button-primary" onClick={() => setView('agents')}><Icon name="play" />Start your first agent</button></div> : <>
+          {!canAsk && <p className="company-warning" role="status"><Icon name="alert" />{current.status === 'stopped' ? 'This agent has been stopped by your client. Choose another active agent.' : 'This agent cannot access the vault while company access is locked or inactive.'}</p>}
+          <div className="vendor-ask-options"><div><label className="field-label" htmlFor="vendor-ask-as">Agent</label><select id="vendor-ask-as" disabled={asking} value={current.name} onChange={(event) => { setAskAs(event.target.value); setFolder(''); setReply(null) }}>{state.agents.map((agent) => <option key={agent.name} value={agent.name}>{agent.name}{agent.status === 'active' ? '' : ` · ${agent.status}`}</option>)}</select></div><div><label className="field-label" htmlFor="vendor-folder">Search in</label><select id="vendor-folder" disabled={asking} value={searchFolder} onChange={(event) => setFolder(event.target.value)}><option value="">All allowed folders</option>{(current.granted_folders ?? []).map((name) => <option key={name} value={name}>{name}</option>)}</select></div></div>
+          <form onSubmit={(event) => { event.preventDefault(); if (canAsk && !asking && question.trim()) void send('ask_question', searchFolder ? { question, folder: searchFolder } : { question }) }}>
+            <label className="field-label" htmlFor="vendor-question">Your question</label><textarea id="vendor-question" rows={4} value={question} disabled={asking} onChange={(event) => setQuestion(event.target.value)} />
+            <div className="vendor-send-row"><span className="small muted"><Icon name="shield" />Limited to this agent’s allowed folders</span><button type="submit" className="button button-primary" disabled={asking || pending || !canAsk || !question.trim()}>{asking ? <span className="spinner" /> : <Icon name="answer" />}{asking ? 'Getting your answer…' : 'Send question'}</button></div>
+          </form>
+          {reply && <section className={`vendor-reply ${reply.denied ? 'is-denied' : ''}`} aria-live="polite"><div className="vendor-reply-heading"><span className="field-label">{reply.denied ? 'Request blocked' : 'Your answer'}</span><Icon name={reply.denied ? 'blocked' : 'check'} /></div><p className="decision-answer">{clean(reply.text)}</p></section>}
+          <details className="vendor-boundary-test"><summary>Test a blocked document download</summary><p className="small muted">Agents can ask questions, but full documents are never released.</p><button type="button" className="button button-small" disabled={asking || pending || !canAsk} onClick={() => void send('get_document', { path: 'Contracts/globex-customer-agreement.md' })}><Icon name="file" />Try downloading a contract</button></details>
+        </>}
+      </section>
+      <details className="vendor-recent-activity"><summary><span>Recent requests &amp; activity</span><span className="count">{history.length}</span></summary>{history.length === 0 ? <p className="small muted vendor-section-copy">Your agents’ requests and responses will appear here.</p> : <ol className="vendor-history">{history.map((entry) => <li key={entry.id}><details><summary><span className={`history-dot ${entry.decision === 'allowed' ? 'decision-allowed' : 'decision-denied'}`} /><span className="vendor-history-title">{entryTitle(entry)}</span><span className={`tag ${entry.decision === 'allowed' ? '' : 'tag-danger'}`}>{entry.kind === 'badge' ? entry.decision === 'allowed' ? 'Verified' : 'Refused' : entry.kind === 'onboard' ? 'Connected' : entry.decision === 'allowed' ? 'Answered' : 'Blocked'}</span><time>{timeLabel(entry.ts)}</time></summary><p className="decision-answer vendor-history-body">{entryBody(entry)}</p></details></li>)}</ol>}</details>
+    </div>}
 
-        <section className="company-panel">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">YOUR AGENTS</span>
-              <h3>{party}'s agents in the data room</h3>
-            </div>
-            <span className="count">{state.agents.length}</span>
-          </div>
-          {state.agents.length === 0 ? (
-            <p className="muted small">No agents yet. Start one in step 2, or run the demo scenario.</p>
-          ) : (
-            <ul className="vendor-agents">
-              {state.agents.filter((a) => !a.parent).map((a) => (
-                <AgentRow key={a.name} agent={a} all={state.agents} depth={0} currentName={current?.name} pending={pending} onUse={setAskAs} onAction={onAction} />
-              ))}
-            </ul>
-          )}
-        </section>
-      </div>
+    {view === 'agents' && <div className="vendor-agents-workspace">
+      <section className="company-panel vendor-start-panel"><div className="section-heading"><div><h2>Start an agent</h2><p className="muted vendor-section-copy">Choose who it works for. Your client’s access limits apply automatically.</p></div><Icon name="agents" /></div>
+        {!state.issuing && <p className="company-warning"><Icon name="alert" />Your company login is paused. Resume issuing in Company settings before starting an agent.</p>}
+        <form onSubmit={(event) => { event.preventDefault(); if (!pending && accessOpen && state.issuing && currentUser && suggested.trim()) void update('Start agent', async () => { await vendorApi.startAgent(party, currentUser, suggested.trim()); setAgentName(''); chooseAgent(suggested.trim()) }) }}>
+          <div className="vendor-start-fields"><div><label className="field-label" htmlFor="vendor-user">Employee</label><select id="vendor-user" value={currentUser} disabled={pending} onChange={(event) => { setUser(event.target.value); setAgentName('') }}>{state.users.map((employee) => <option key={employee} value={employee}>{employee}</option>)}</select></div><div><label className="field-label" htmlFor="vendor-agent-name">Agent name</label><input id="vendor-agent-name" disabled={pending} value={suggested} onChange={(event) => setAgentName(event.target.value.replace(/\s+/g, '-'))} /></div></div><button type="submit" className="button button-primary" disabled={pending || !suggested.trim() || !currentUser || !state.issuing || !accessOpen}><Icon name="key" />{pending ? 'Starting agent…' : 'Start agent'}</button>
+        </form>
+      </section>
+      <section className="company-panel"><div className="section-heading"><h2>Your agents</h2><span className="count">{state.agents.length}</span></div>{state.agents.length === 0 ? <p className="small muted">No agents yet. Start one using the form above.</p> : <ul className="vendor-agents">{state.agents.filter((agent) => !agent.parent).map((agent) => <AgentRow key={agent.name} agent={agent} all={state.agents} depth={0} currentName={current?.name} pending={pending} onUse={chooseAgent} onAction={update} />)}</ul>}</section>
+    </div>}
 
-      <div className="vendor-column">
-        <section className="company-panel">
-          <span className="eyebrow">STEP 3 · ASK FALCON'S DATA ROOM</span>
-          <h3 className="vendor-h3">Your agent asks. Falcon's vault answers.</h3>
-          {!current ? (
-            <p className="muted small">Start an agent first.</p>
-          ) : (
-            <>
-              <label className="field-label" htmlFor="vendor-ask-as">Ask as</label>
-              <select id="vendor-ask-as" value={current.name} onChange={(e) => setAskAs(e.target.value)}>
-                {usable.map((a) => <option key={a.name} value={a.name}>{a.name} ({(a.granted_folders ?? []).join(', ')})</option>)}
-              </select>
-              <label className="field-label" htmlFor="vendor-question">Question</label>
-              <textarea id="vendor-question" rows={3} value={question} onChange={(e) => setQuestion(e.target.value)} />
-              <label className="field-label" htmlFor="vendor-folder">Folder</label>
-              <select id="vendor-folder" value={folder} onChange={(e) => setFolder(e.target.value)}>
-                <option value="">Any folder this agent may use</option>
-                {(current.granted_folders ?? []).map((f) => <option key={f} value={f}>{f}</option>)}
-                <option value="Board Minutes">Board Minutes (not shared)</option>
-              </select>
-              <div className="trace-actions">
-                <button type="button" className="button button-primary" disabled={asking || !question.trim()} onClick={() => void send('ask_question', folder ? { question, folder } : { question })}>
-                  {asking ? <span className="spinner" /> : <Icon name="answer" />}Send question
-                </button>
-                <button type="button" className="button" disabled={asking} onClick={() => void send('get_document', { path: 'Contracts/globex-customer-agreement.md' })}>
-                  <Icon name="file" />Try to download a contract
-                </button>
-              </div>
-              {reply && (
-                <div className={`vendor-reply ${reply.denied ? 'is-denied' : ''}`} aria-live="polite">
-                  <span className="field-label">{reply.denied ? 'Blocked by Falcon’s vault' : 'What your agent received (this is all it gets)'}</span>
-                  <p className="decision-answer">{clean(reply.text)}</p>
-                </div>
-              )}
-            </>
-          )}
-        </section>
-
-        <section className="company-panel">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">WHAT CAME BACK</span>
-              <h3>Your agents' requests and answers</h3>
-            </div>
-            <span className="count">{history.length}</span>
-          </div>
-          {history.length === 0 ? (
-            <p className="muted small">Nothing yet.</p>
-          ) : (
-            <ol className="vendor-history">
-              {history.map((e) => (
-                <li key={e.id}>
-                  <details>
-                    <summary>
-                      <span className={`history-dot ${e.decision === 'allowed' ? 'decision-allowed' : 'decision-denied'}`} />
-                      <span className="vendor-history-title">{entryTitle(e)}</span>
-                      <span className={`tag ${e.decision === 'allowed' ? '' : 'tag-danger'}`}>{e.kind === 'badge' ? (e.decision === 'allowed' ? 'Badge issued' : 'Badge refused') : e.decision === 'allowed' ? 'Answered' : 'Blocked'}</span>
-                      <time>{timeLabel(e.ts)}</time>
-                    </summary>
-                    <p className="decision-answer vendor-history-body">{entryBody(e)}</p>
-                  </details>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
-      </div>
-    </div>
-  )
+    {view === 'settings' && <div className="vendor-settings-workspace">
+      <section className="company-panel"><div className="section-heading"><h2>Company login</h2><span className={`tag ${state.issuing ? '' : 'tag-danger'}`}>{state.issuing ? 'Issuing enabled' : 'Paused'}</span></div><p className="muted vendor-section-copy">Your company login verifies employees and issues agent identities. Pause it to prevent new badges.</p><button type="button" className={`button ${state.issuing ? 'button-danger' : 'button-primary'}`} disabled={pending} onClick={() => void update('Update company login', () => state.issuing ? vendorApi.stopIssuing(party) : vendorApi.resumeIssuing(party))}>{state.issuing ? 'Pause issuing' : 'Resume issuing'}</button><p className="small muted vendor-settings-note">Existing badges last up to 15 minutes. Your client can stop them immediately.</p><details className="vendor-login-details"><summary>Connection details</summary><dl className="access-terms"><div><dt>Identity provider</dt><dd>{state.issuer}</dd></div><div><dt>Credentials issued</dt><dd>{state.id_jags_issued}</dd></div><div><dt>Allowed actions</dt><dd>{(access?.scope ?? []).map((scope) => ABILITY[scope] ?? scope).join(', ') || 'None'}</dd></div></dl></details></section>
+      <section className="company-panel"><div className="section-heading"><h2>Employees</h2><span className="count">{state.users.length}</span></div><p className="muted vendor-section-copy">These employees may run agents for {party}.</p><ul className="vendor-employee-list">{state.users.map((employee) => <li key={employee}><span className="avatar">{employee.slice(0, 2).toUpperCase()}</span>{employee}</li>)}</ul><form onSubmit={(event) => { event.preventDefault(); if (!pending && newUser.includes('@')) void update('Add employee', async () => { await vendorApi.addUser(party, newUser.trim()); setNewUser('') }) }}><label className="field-label" htmlFor="vendor-new-user">Employee email</label><div className="inline-field"><input id="vendor-new-user" type="email" value={newUser} placeholder="person@company.com" disabled={pending} onChange={(event) => setNewUser(event.target.value)} /><button type="submit" className="button" disabled={pending || !newUser.includes('@')}>Add employee</button></div></form></section>
+    </div>}
+  </div>
 }

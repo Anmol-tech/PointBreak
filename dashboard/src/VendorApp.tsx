@@ -20,20 +20,20 @@ export default function VendorApp() {
     <div className="vault-app vendor-platform">
       <header className="app-header">
         <a className="brand" href="/" aria-label="Vendor portal home">
-          <span className="brand-mark"><Icon name="key" /></span><span>vendor portal</span><span className="brand-divider">/</span><span className="brand-project">secure agent access</span>
+          <span className="brand-mark"><Icon name="shield" /></span><span>vendorvault</span><span className="brand-divider">/</span><span className="brand-project">Vendor portal</span>
         </a>
         <span className="app-nav" />
-        <span className="connection is-live"><span />Your company's environment</span>
+        <span className="vendor-header-label"><Icon name="lock" />Your company workspace</span>
       </header>
       <main className="app-main">
         {error && <div className="error-notice" role="alert"><Icon name="alert" /><span>{error}</span><button type="button" aria-label="Dismiss error" onClick={() => setError(null)}><Icon name="close" /></button></div>}
         <section className="page-heading">
-          <div><div className="eyebrow">FOR VENDORS WORKING WITH OUR CLIENTS</div><h1>Your agents.<br /><em>Your client’s rules.</em></h1></div>
-          <p className="heading-note"><span />Join with an invite, connect your company login,<br />then start agents with exactly the access you were given.</p>
+          <div><div className="eyebrow">YOUR SECURE WORKSPACE</div><h1>Your work.<br /><em>Secure answers.</em></h1></div>
+          <p className="heading-note"><span />Start an agent. Ask a question.<br />Get answers within your client’s boundaries.</p>
         </section>
         <VendorPortal inviteCode={inviteCode} pending={pending !== null} onAction={act} />
       </main>
-      <footer className="app-footer"><span><Icon name="lock" />Vendor portal · your agents' keys stay in your environment</span><span>Separate from your client's control center</span></footer>
+      <footer className="app-footer"><span><Icon name="lock" />Vendor workspace · agent keys stay with your company</span><span>Answers shared. Original files protected.</span></footer>
     </div>
   )
 }
