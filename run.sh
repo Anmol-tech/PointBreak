@@ -33,7 +33,8 @@ GATEWAY=$!
 trap 'kill $PARTY $GATEWAY 2>/dev/null' EXIT INT TERM
 
 echo
-echo "VendorVault dashboard: http://localhost:8000"
+echo "Falcon control center: http://localhost:8000"
+echo "Vendor portal (separate platform): http://localhost:9001"
 echo "OpenCode MCP endpoint: http://localhost:9001/agents/opencode/mcp"
 echo "Press Ctrl+C to stop."
 wait

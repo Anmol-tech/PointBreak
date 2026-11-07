@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { TraceMatch, VaultState } from './types'
+import type { VendorState, TraceMatch, VaultState } from './types'
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -7,7 +7,10 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   })
-  if (!res.ok) throw new Error(`${path} failed (${res.status})`)
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error ?? `${path} failed (${res.status})`)
+  }
   return res.json() as Promise<T>
 }
 
@@ -20,6 +23,9 @@ export const api = {
   trace: (text: string) => post<{ matches: TraceMatch[] }>('/api/trace', { text }),
   reset: () => post('/api/reset'),
   runDemo: (name: string) => post(`/api/demo/${name}`),
+  inviteVendor: (vendor: { name: string; purpose: string; contact: string; folders: string[]; scope: string[] }) =>
+    post<{ name: string; invite_code: string }>('/api/vendors', vendor),
+  offboardVendor: (name: string) => post(`/api/vendors/${encodeURIComponent(name)}/offboard`),
 }
 
 /** Live gateway state: refetches whenever the server-sent event stream reports a new version. */
@@ -54,4 +60,69 @@ export function useVaultState() {
   }, [refresh])
 
   return { state, connected, refresh }
+}
+
+// The vendor portal talks to the vendor's own runtime (port 9001), not to Falcon's gateway.
+export const VENDOR_PORTAL_URL =
+  (import.meta.env.VITE_PARTY_URL as string | undefined) ?? `${window.location.protocol}//${window.location.hostname}:9001`
+// Served from the vendor runtime itself, the portal calls its own origin.
+const PARTY_URL = window.location.port === '9001' ? '' : VENDOR_PORTAL_URL
+
+async function partyCall<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  const res = await fetch(`${PARTY_URL}${path}`, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  const data = (await res.json().catch(() => ({}))) as { error?: string }
+  if (!res.ok) throw new Error(data.error ?? `${path} failed (${res.status})`)
+  return data as T
+}
+
+export interface InvitePreview {
+  name: string
+  client: string
+  purpose: string
+  folders: string[]
+  scope: string[]
+  contact: string
+}
+
+export const vendorApi = {
+  list: () => partyCall<{ name: string; issuer: string; issuing: boolean; agents: number }[]>('/api/vendors'),
+  previewInvite: (code: string) => partyCall<InvitePreview>(`/api/vendor/invite/${encodeURIComponent(code.trim())}`),
+  onboard: (code: string, users: string[]) =>
+    partyCall<{ name: string; issuer: string; folders: string[] }>('/api/vendor/onboard', 'POST', { invite_code: code, users }),
+  addUser: (party: string, user: string) => partyCall(`/api/vendor/${encodeURIComponent(party)}/users`, 'POST', { user }),
+  state: (party: string) => partyCall<VendorState>(`/api/vendor/${encodeURIComponent(party)}`),
+  startAgent: (party: string, user: string, name: string) => partyCall('/agents', 'POST', { party, user, name }),
+  addHelper: (parent: string, name: string, folders: string[]) =>
+    partyCall(`/agents/${encodeURIComponent(parent)}/spawn`, 'POST', { name, folders }),
+  ask: (agent: string, tool: string, args: Record<string, string>) =>
+    partyCall<{ text: string; denied: boolean }>(`/agents/${encodeURIComponent(agent)}/ask`, 'POST', { tool, arguments: args }),
+  stopIssuing: (party: string) => partyCall(`/idp/${encodeURIComponent(party)}/stop`, 'POST'),
+  resumeIssuing: (party: string) => partyCall(`/idp/${encodeURIComponent(party)}/resume`, 'POST'),
+}
+
+/** One vendor's own view, refreshed every 2 seconds. */
+export function useVendorState(party: string) {
+  const [state, setState] = useState<VendorState | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    try {
+      setState(await vendorApi.state(party))
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not reach the vendor runtime on port 9001')
+    }
+  }, [party])
+
+  useEffect(() => {
+    refresh()
+    const poll = window.setInterval(refresh, 2000)
+    return () => window.clearInterval(poll)
+  }, [refresh])
+
+  return { state, error, refresh }
 }

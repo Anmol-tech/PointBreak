@@ -204,3 +204,71 @@ summary { cursor: pointer; }
 @media (max-width: 430px) { .app-header, .app-main, .app-footer { padding-left: 17px; padding-right: 17px; } .brand { gap: 8px; font-size: 19px; } .brand-divider { margin: 0; } .brand-project { font-size: 12px; } .app-main h1 { font-size: 34px; letter-spacing: -1.4px; } .app-nav { gap: 3px; } .app-nav button { font-size: 11px; padding: 10px 7px; } .lane-cards { grid-template-columns: 1fr; } .board-card { padding: 20px; } .section-heading { flex-wrap: wrap; gap: 10px; } .board-heading > span { width: 100%; } .scenario-button { padding: 9px 10px; } .demo-controls { gap: 7px; } .identity-detail dl > div { grid-template-columns: 1fr; gap: 3px; } .identity-chain { line-height: 1.7; } .activity-history time { font-size: 11px; } .company-panel { padding: 18px; } .sharing-fields label { gap: 8px; } .sharing-fields label > small { font-size: 11px; } .leak-workspace { padding: 18px; } .trace-actions { gap: 12px; } }
 @media (pointer: coarse) { button, summary, .sharing-fields label { min-height: 44px; } .leak-workspace textarea { font-size: 16px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* Vendor platform screens */
+.vendor-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 25px; align-items: start; }
+.vendor-column { display: grid; gap: 25px; min-width: 0; }
+.vendor-h3 { margin: 8px 0 18px; }
+.company-panel .eyebrow + h3 { margin-top: 8px; }
+.vendor-copy { margin: 14px 0; line-height: 1.7; }
+.company-panel select, .company-panel input[type=text], .company-panel input:not([type]), .company-panel textarea { width: 100%; margin-bottom: 16px; padding: 10px 12px; border: 1px solid var(--vault-line); border-radius: 8px; background: var(--vault-bg); color: var(--vault-ink); font-size: 13px; }
+.company-panel textarea { resize: vertical; line-height: 1.6; }
+.vendor-agents, .vendor-helpers { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.vendor-helpers { margin: 10px 0 0 18px; padding-left: 14px; border-left: 1px dashed var(--vault-line); }
+.vendor-agent { padding: 14px; border: 1px solid var(--vault-line); border-radius: 10px; background: var(--vault-bg); }
+.vendor-agent.is-selected { border-color: var(--vault-accent); box-shadow: 0 0 0 1px var(--vault-accent); }
+.vendor-agent-main { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.vendor-agent-main strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.vendor-agent-main span, .vendor-agent-main small { display: block; margin-top: 4px; font-size: 11px; color: var(--vault-muted); overflow-wrap: anywhere; }
+.vendor-agent-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.helper-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--vault-line); }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.chip-check { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--vault-line); border-radius: 6px; font-size: 12px; }
+.chip-check input { accent-color: var(--vault-accent); }
+.vendor-reply { margin-top: 20px; padding: 16px; border-radius: 9px; background: var(--vault-tint); }
+.vendor-reply.is-denied { background: var(--vault-danger-bg); color: var(--vault-danger); }
+.vendor-reply.is-denied .field-label { color: var(--vault-danger); }
+.vendor-history { list-style: none; padding: 0; margin: 0; }
+.vendor-history li { border-top: 1px solid var(--vault-line); }
+.vendor-history summary { display: flex; align-items: center; gap: 10px; padding: 12px 0; list-style: none; font-size: 12px; }
+.vendor-history summary::-webkit-details-marker { display: none; }
+.vendor-history-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.vendor-history time { color: var(--vault-muted); font-size: 11px; white-space: nowrap; }
+.vendor-history .history-dot { margin-top: 0; }
+.vendor-history-body { padding: 0 0 14px 16px; font-size: 13px; color: var(--vault-muted); }
+@media (max-width: 1050px) { .vendor-grid { grid-template-columns: 1fr; } }
+/* Vendor onboarding (Falcon side) and vendor portal */
+.vendor-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 25px; }
+.vendor-picker button { padding: 9px 13px; border: 1px solid var(--vault-line); border-radius: 7px; background: var(--vault-surface); color: var(--vault-ink); font-size: 12px; font-weight: 500; }
+.vendor-picker button[aria-pressed=true] { background: var(--vault-accent); border-color: var(--vault-accent); color: var(--vault-accent-ink); }
+.vendor-picker .join-button { border-style: dashed; color: var(--vault-accent); }
+.vendor-picker .join-button[aria-pressed=true] { color: var(--vault-accent-ink); border-style: solid; }
+.onboard-banner { display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; padding: 22px 25px; margin-bottom: 25px; border: 1px dashed var(--vault-accent); border-radius: 12px; background: var(--vault-tint); }
+.onboard-banner p { margin-top: 6px; max-width: 620px; line-height: 1.7; }
+.onboard-panel { margin-bottom: 25px; }
+.onboard-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; margin: 6px 0 20px; }
+.onboard-fields { margin-top: 0; padding-top: 0; border-top: 0; }
+.invite-code { display: inline-block; margin: 6px 0 14px; padding: 10px 16px; border-radius: 8px; background: var(--vault-bg); border: 1px solid var(--vault-line); font-family: var(--font-mono); font-size: 20px; letter-spacing: 2px; color: var(--vault-accent); }
+.invite-pending { margin-top: 16px; padding: 14px 16px; border-radius: 9px; background: var(--vault-warning-bg); }
+.invite-pending .field-label, .invite-pending p { color: var(--vault-warning); }
+.onboard-steps { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 11px; font-size: 13px; line-height: 1.6; }
+.onboard-steps li { display: flex; gap: 10px; align-items: flex-start; }
+.onboard-steps li > span { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex-shrink: 0; border-radius: 50%; background: var(--vault-tint); color: var(--vault-accent); font-size: 11px; font-weight: 600; }
+.invite-preview { margin-top: 18px; padding: 16px; border-radius: 10px; background: var(--vault-tint); }
+.invite-preview h3 { margin: 4px 0 12px; font-size: 22px; }
+.access-terms { display: grid; gap: 9px; margin-top: 12px; font-size: 12px; }
+.access-terms > div { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 12px; }
+.access-terms dt { color: var(--vault-muted); }
+.access-terms dd { overflow-wrap: anywhere; }
+.vendor-terms { margin-bottom: 6px; }
+.access-card { border-color: var(--vault-accent); }
+.inline-field { display: flex; gap: 10px; align-items: flex-start; }
+.inline-field input { margin-bottom: 0 !important; }
+.offboard-button { margin-top: 18px; color: var(--vault-danger); }
+@media (max-width: 760px) { .onboard-form { grid-template-columns: 1fr; } .access-terms > div { grid-template-columns: 1fr; gap: 2px; } .inline-field { flex-direction: column; } }
+
+/* The vendor platform gets its own accent so it never looks like the client's control center */
+.vendor-platform { --vault-accent: light-dark(#0f8a7e, #6fe0cf); --vault-accent-ink: light-dark(#ffffff, #0b2b27); --vault-tint: light-dark(#dff5f1, #1d3f3b); }
+.portal-note { margin: -12px 0 22px; }
+.app-nav .portal-link { display: inline-flex; align-items: center; gap: 6px; border: 1px dashed var(--vault-line); }
+.app-nav .portal-link .icon { width: 13px; height: 13px; }

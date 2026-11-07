@@ -1,4 +1,5 @@
-"""RivalBid splits a scrape across 5 sub-agents so no single agent looks suspicious.
+"""A compromised vendor tool (like the 2025 Drift breach) splits a scrape across 5 sub-agents
+so no single agent looks suspicious. VendorVault counts everything the vendor saw together.
 
 Usage: python -m scripts.split_scrape_attack [--pause SECONDS]
 """
@@ -11,13 +12,15 @@ import httpx
 
 from party.client import GATEWAY_URL, PROXY_URL, McpAgent, PartyError, create_root, say, spawn
 
+VENDOR, USER = "Ledgerly", "sam@ledgerly.io"
+
 
 def run(proxy: str = PROXY_URL, gateway: str = GATEWAY_URL, pause: float = 0.4, workers: int = 5) -> dict:
-    create_root("RivalBid", "mallory@rivalbid.com", "rival-orchestrator", proxy=proxy)
-    names = [f"rival-worker-{i}" for i in range(1, workers + 1)]
+    create_root(VENDOR, USER, "ledgerly-sync", proxy=proxy)
+    names = [f"ledgerly-worker-{i}" for i in range(1, workers + 1)]
     for n in names:
-        spawn("rival-orchestrator", n, proxy=proxy)
-    boss = McpAgent("rival-orchestrator", proxy)
+        spawn("ledgerly-sync", n, proxy=proxy)
+    boss = McpAgent("ledgerly-sync", proxy)
     outline, _ = boss.tool("list_folders")
 
     # Turn every "Doc title: heading; heading" line into one targeted question per heading.
@@ -36,7 +39,7 @@ def run(proxy: str = PROXY_URL, gateway: str = GATEWAY_URL, pause: float = 0.4, 
             break
         time.sleep(pause)
     state = httpx.get(f"{gateway}/api/state", timeout=10).json()
-    return next(p for p in state["parties"] if p["name"] == "RivalBid")
+    return next(p for p in state["parties"] if p["name"] == VENDOR)
 
 
 def main():
@@ -48,7 +51,7 @@ def main():
     except PartyError as e:
         print(f"⛔ {e}")
         return
-    print(f"\nRivalBid coverage {party['coverage']:.0%}, locked={party['locked']} ({party['lock_reason']})")
+    print(f"\n{VENDOR} coverage {party['coverage']:.0%}, locked={party['locked']} ({party['lock_reason']})")
 
 
 if __name__ == "__main__":

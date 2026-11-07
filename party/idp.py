@@ -1,8 +1,8 @@
-"""A party's own identity provider (stands in for BuyerCo's Okta/Entra/Cognito).
+"""A vendor's own identity provider (stands in for the vendor's Okta/Entra/Cognito).
 
-It signs users in (OIDC-style ID token) and, under the party's own policy, issues
+It signs employees in (OIDC-style ID token) and, under the vendor's own policy, issues
 ID-JAGs (IETF draft "Identity Assertion JWT Authorization Grant") that vouch for
-the party's agents to VendorVault.
+the vendor's agents to VendorVault.
 """
 
 import time

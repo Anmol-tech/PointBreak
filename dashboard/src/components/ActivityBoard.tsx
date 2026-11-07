@@ -12,6 +12,7 @@ function cleanAnswer(text: string) { return text.replace(/[\u200b\u200c\ufeff]/g
 
 function eventTitle(event: VaultEvent) {
   if (event.kind === 'lock') return event.decision === 'alert' ? 'Company locked out' : 'Company access updated'
+  if (event.kind === 'vendor') return event.decision === 'alert' ? 'Vendor offboarded' : event.decision === 'allowed' ? 'Vendor connected its login' : 'New vendor invited'
   if (event.kind === 'trace') return 'Leaked answer traced'
   if (event.kind === 'revoke') return 'Agent access stopped'
   if (event.kind === 'alert') return 'Disclosure limit approaching'
@@ -39,7 +40,7 @@ function EventCard({ event, selected, feature, onSelect }: { event: VaultEvent; 
   return <button type="button" className={`board-card event-card ${feature ? 'feature-card' : ''} ${blocked ? 'blocked-card' : ''}`} aria-pressed={selected} onClick={onSelect}>
     <span className="card-meta"><span className="avatar"><Icon name={answerEvent ? 'answer' : blocked ? 'blocked' : 'alert'} /></span><span>{displayName(story.actor)}</span><Icon name="arrow" /></span>
     <span className="card-title">{eventTitle(event)}</span>
-    {answerEvent ? <><span className="card-description">{event.sources?.length ? `Answered from ${event.sources.length} cited section${event.sources.length === 1 ? '' : 's'}` : 'Answered from shared deal information'}</span><span className="answer-preview">{cleanAnswer(event.answer ?? '').split('\n').slice(1).join(' ').slice(0, 210) || 'Select this request to read the answer.'}</span><span className="card-footer">Masked · cited · fingerprinted</span></> : <><span className="card-description">{event.party ?? 'Unverified caller'} · {timeLabel(event.ts)}</span><span className={`tag ${blocked ? 'tag-danger' : 'tag-warning'}`}>{blocked ? 'Request blocked' : event.kind === 'trace' ? 'Origin identified' : event.kind === 'revoke' ? 'Access stopped' : 'Company alert'}</span></>}
+    {answerEvent ? <><span className="card-description">{event.sources?.length ? `Answered from ${event.sources.length} cited section${event.sources.length === 1 ? '' : 's'}` : 'Answered from shared deal information'}</span><span className="answer-preview">{cleanAnswer(event.answer ?? '').split('\n').slice(1).join(' ').slice(0, 210) || 'Select this request to read the answer.'}</span><span className="card-footer">Masked · cited · fingerprinted</span></> : <><span className="card-description">{event.party ?? 'Unverified caller'} · {timeLabel(event.ts)}</span><span className={`tag ${blocked ? 'tag-danger' : 'tag-warning'}`}>{blocked ? 'Request blocked' : event.kind === 'trace' ? 'Origin identified' : event.kind === 'revoke' ? 'Access stopped' : event.kind === 'vendor' ? 'Vendor update' : 'Vendor alert'}</span></>}
   </button>
 }
 
@@ -65,7 +66,7 @@ export function ActivityBoard({ state, pending, onAction, onManage }: { state: V
   const [showAllBlocked, setShowAllBlocked] = useState(false)
   const recent = [...state.events].reverse()
   const answers = recent.filter((event) => event.kind === 'call' && event.tool === 'ask_question' && event.decision === 'allowed' && event.answer)
-  const blocked = recent.filter((event) => event.decision === 'denied' || event.decision === 'alert' || event.kind === 'trace')
+  const blocked = recent.filter((event) => event.decision === 'denied' || event.decision === 'alert' || event.kind === 'trace' || event.kind === 'vendor')
   const chosenAgent = selection?.kind === 'agent' ? state.agents.find((agent) => agent.id === selection.id) : undefined
   const chosenEvent = selection?.kind === 'event' ? state.events.find((event) => event.id === selection.id) : undefined
   const following = !chosenAgent && !chosenEvent

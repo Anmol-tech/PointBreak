@@ -1,4 +1,4 @@
-"""Multi-agent demo: BuyerCo's orchestrator spawns legal and finance sub-agents.
+"""Multi-agent demo: LexPartners' lead agent spawns two narrower reviewer helpers.
 
 Usage: python -m party.runner [--pause SECONDS]
 """
@@ -14,34 +14,34 @@ def run_team(pause: float = 1.5, proxy: str = PROXY_URL) -> str:
         print(f"\n— {title}")
         time.sleep(pause)
 
-    step("alice@buyerco.com starts BuyerCo's orchestrator (ID-JAG from BuyerCo's IdP → DPoP-bound token)")
-    create_root("BuyerCo", "alice@buyerco.com", "buyer-orchestrator", proxy=proxy)
+    step("dana@lexpartners.com starts LexPartners' lead agent (ID-JAG from LexPartners' login → key-bound badge)")
+    create_root("LexPartners", "dana@lexpartners.com", "lex-lead", proxy=proxy)
 
-    step("orchestrator spawns specialist sub-agents with narrower access (token exchange)")
-    spawn("buyer-orchestrator", "legal-agent", folders=["Contracts", "Customers"], proxy=proxy)
-    spawn("buyer-orchestrator", "finance-agent", folders=["Financials"], proxy=proxy)
-    say("legal-agent", "identity: legal-agent ← buyer-orchestrator ← alice@buyerco.com ← BuyerCo (Contracts, Customers)")
-    say("finance-agent", "identity: finance-agent ← buyer-orchestrator ← alice@buyerco.com ← BuyerCo (Financials)")
+    step("lead agent creates helpers with narrower access (token exchange)")
+    spawn("lex-lead", "contracts-reviewer", folders=["Contracts"], proxy=proxy)
+    spawn("lex-lead", "customer-reviewer", folders=["Customers"], proxy=proxy)
+    say("contracts-reviewer", "identity: contracts-reviewer ← lex-lead ← dana@lexpartners.com ← LexPartners (Contracts)")
+    say("customer-reviewer", "identity: customer-reviewer ← lex-lead ← dana@lexpartners.com ← LexPartners (Customers)")
 
-    legal, finance = McpAgent("legal-agent", proxy), McpAgent("finance-agent", proxy)
-    legal.initialize()
-    finance.initialize()
+    contracts, customers = McpAgent("contracts-reviewer", proxy), McpAgent("customer-reviewer", proxy)
+    contracts.initialize()
+    customers.initialize()
 
-    step("legal agent asks about change-of-control risk")
-    say("legal-agent", *legal.tool("ask_question", question="Which customer contracts have change of control clauses?"))
+    step("contracts reviewer asks about change-of-control risk")
+    say("contracts-reviewer", *contracts.tool("ask_question", question="Which customer contracts have change of control clauses?"))
 
-    step("finance agent asks about revenue")
-    say("finance-agent", *finance.tool("ask_question", question="What was quarterly revenue and operating income?"))
+    step("customer reviewer asks about customer concentration")
+    say("customer-reviewer", *customers.tool("ask_question", question="How concentrated is revenue among top customers?"))
 
-    step("finance agent tries to download the raw income statement")
-    say("finance-agent", *finance.tool("get_document", path="Financials/income-statement-fy2025.md"))
+    step("contracts reviewer tries to download a full contract")
+    say("contracts-reviewer", *contracts.tool("get_document", path="Contracts/globex-customer-agreement.md"))
 
-    step("finance agent tries the unshared Board Minutes folder")
-    say("finance-agent", *finance.tool("ask_question", question="What is the minimum acceptable price?", folder="Board Minutes"))
+    step("contracts reviewer asks about Financials, which LexPartners' legal work does not include")
+    say("contracts-reviewer", *contracts.tool("ask_question", question="What was quarterly revenue?", folder="Financials"))
 
-    step("finance agent tries Contracts, which only the legal agent was given")
-    say("finance-agent", *finance.tool("ask_question", question="Change of control terms", folder="Contracts"))
-    return "BuyerCo team created: orchestrator, legal-agent and finance-agent asked questions; 3 requests blocked"
+    step("customer reviewer tries Contracts, which only its sibling was given")
+    say("customer-reviewer", *customers.tool("ask_question", question="Change of control terms", folder="Contracts"))
+    return "LexPartners team created: lead agent and two reviewers asked questions; 3 requests blocked"
 
 
 def main():
@@ -52,9 +52,9 @@ def main():
     try:
         print("\n" + run_team(args.pause))
     except PartyError as e:
-        say("buyer-orchestrator", str(e), denied=True)
+        say("lex-lead", str(e), denied=True)
         return
-    print("Revoke an agent on the dashboard, then re-run a call to see it blocked.")
+    print("Stop an agent on the dashboard, then re-run a call to see it blocked.")
 
 
 if __name__ == "__main__":

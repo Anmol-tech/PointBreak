@@ -15,21 +15,26 @@
     "label": "Amazon Nova Pro",
     "region": "us-east-1"
   },
-  "parties": {
-    "BuyerCo": {
-      "users": ["alice@buyerco.com", "bob@buyerco.com"],
-      "folders": ["Contracts", "Customers", "Financials", "HR"],
+  "client": "Falcon Analytics",
+  "vendors": {
+    "LexPartners": {
+      "purpose": "Legal review of customer and supplier contracts",
+      "contact": "dana@lexpartners.com",
+      "users": ["dana@lexpartners.com", "omar@lexpartners.com"],
+      "folders": ["Contracts", "Customers"],
       "scope": ["vault:list", "vault:ask"]
     },
-    "RivalBid": {
-      "users": ["mallory@rivalbid.com"],
-      "folders": ["Contracts", "Financials"],
+    "Ledgerly": {
+      "purpose": "Financial audit and payroll checks",
+      "contact": "sam@ledgerly.io",
+      "users": ["sam@ledgerly.io", "li@ledgerly.io"],
+      "folders": ["Financials", "HR"],
       "scope": ["vault:list", "vault:ask"]
     }
   },
   "opencode_agent": {
-    "party": "BuyerCo",
-    "user": "alice@buyerco.com",
+    "party": "LexPartners",
+    "user": "dana@lexpartners.com",
     "name": "opencode"
   }
 }

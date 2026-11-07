@@ -1,7 +1,9 @@
-"""Party-side agent runtime: holds each agent's private key, gets tokens, signs DPoP proofs.
+"""Vendor-side runtime: each vendor's company login (IdP) plus the agent key holder.
 
-Agents (OpenCode, the runner) talk plain MCP to http://localhost:9001/agents/<name>/mcp
-and never hold a key or token themselves.
+In real life every vendor runs this in its own environment; for the demo one process
+simulates all of them. Agents (OpenCode, the runner) talk plain MCP to
+http://localhost:9001/agents/<name>/mcp and never hold a key or token themselves.
+The /api/vendor endpoints feed the vendor portal: onboarding, agents, what came back.
 """
 
 import json
@@ -9,10 +11,12 @@ import time
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from common.config import load
+from common.config import ROOT, load
 from common.dpop import make_proof, new_key
 from party.idp import IdPError, PartyIdP
 
@@ -23,15 +27,31 @@ ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"
 cfg = load()
 TOKEN_URL = f"{cfg['gateway_url']}/token"
 MCP_URL = f"{cfg['gateway_url']}/mcp"
-idps = {name: PartyIdP(cfg, name, p["users"]) for name, p in cfg["parties"].items()}
+
+
+def configured_idps() -> dict[str, PartyIdP]:
+    return {name: PartyIdP(cfg, name, p["users"]) for name, p in cfg["vendors"].items()}
+
+
+idps = configured_idps()
 agents: dict[str, dict] = {}
-http = httpx.Client(timeout=20)
+history: list[dict] = []
+http = httpx.Client(timeout=30)
 
 app = FastAPI(title="Party agent runtime + IdPs")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 class PartyError(Exception):
     pass
+
+
+def record(**entry):
+    """The vendor's own log of what its agents did and received."""
+    entry.setdefault("ts", time.time())
+    entry["id"] = (history[-1]["id"] + 1) if history else 1
+    history.append(entry)
+    del history[:-300]
 
 
 def _store_token(a: dict, resp: httpx.Response):
@@ -80,8 +100,14 @@ def ensure_token(a: dict):
 def new_agent(name, party, user, parent=None, scope=None, folders=None) -> dict:
     a = {"name": name, "party": party, "user": user, "parent": parent, "scope": scope, "folders": folders,
          "key": new_key(), "token": None, "exp": 0}
-    ensure_token(a)
+    try:
+        ensure_token(a)
+    except PartyError as e:
+        record(kind="badge", party=party, agent=name, user=user, parent=parent, decision="denied", reason=str(e))
+        raise
     agents[name] = a
+    record(kind="badge", party=party, agent=name, user=user, parent=parent, decision="allowed",
+           folders=a["granted_folders"], scope=a["granted_scope"])
     return a
 
 
@@ -122,7 +148,7 @@ def list_agents():
     return [public(a) for a in agents.values()]
 
 
-def _deny_batch(payload, reason: str):
+def _deny_body(payload, reason: str):
     """Answer each JSON-RPC request with a visible denial when no token can be obtained."""
     batch = payload if isinstance(payload, list) else [payload]
     out = []
@@ -135,37 +161,72 @@ def _deny_batch(payload, reason: str):
         else:
             out.append({"jsonrpc": "2.0", "id": m["id"], "error": {"code": -32001, "message": f"VendorVault: {reason}"}})
     if not out:
-        return Response(status_code=202)
-    return JSONResponse(out if isinstance(payload, list) else out[0])
+        return None
+    return out if isinstance(payload, list) else out[0]
 
 
-@app.post("/agents/{name}/mcp")
-async def forward(name: str, request: Request):
-    body = await request.body()
-    payload = json.loads(body or b"{}")
+def _record_calls(name: str, party: str | None, payload, body):
+    requests = payload if isinstance(payload, list) else [payload]
+    replies = body if isinstance(body, list) else [body] if body else []
+    by_id = {r.get("id"): r for r in replies if isinstance(r, dict)}
+    for m in requests:
+        if m.get("method") != "tools/call" or m.get("id") not in by_id:
+            continue
+        result = by_id[m["id"]].get("result") or {}
+        text = "".join(c.get("text", "") for c in result.get("content", []))
+        denied = bool(result.get("isError")) or "error" in by_id[m["id"]]
+        params = m.get("params") or {}
+        record(kind="call", party=party, agent=name, tool=params.get("name"), args=params.get("arguments") or {},
+               decision="denied" if denied else "allowed", text=text,
+               reason=text.replace("⛔ VendorVault denied: ", "") if denied else None)
+
+
+async def _process(name: str, payload):
+    """Send one MCP message (or batch) to the gateway as agent `name`."""
     oc = cfg["opencode_agent"]
+    party = agents[name]["party"] if name in agents else (oc["party"] if name == oc["name"] else None)
     try:
         if name not in agents:
             if name != oc["name"]:
-                return _deny_batch(payload, f"agent {name} is not registered")
+                raise PartyError(f"agent {name} is not registered")
             await run_in_threadpool(new_agent, oc["name"], oc["party"], oc["user"])
         a = agents[name]
         await run_in_threadpool(ensure_token, a)
     except PartyError as e:
-        return _deny_batch(payload, str(e))
-    resp = await run_in_threadpool(http.post, MCP_URL, content=body, headers={
-        "Content-Type": "application/json",
+        body = _deny_body(payload, str(e))
+        _record_calls(name, party, payload, body)
+        return body
+    resp = await run_in_threadpool(http.post, MCP_URL, json=payload, headers={
         "Accept": "application/json, text/event-stream",
         "Authorization": f"DPoP {a['token']}",
         "DPoP": make_proof(a["key"], "POST", MCP_URL, a["token"]),
     })
-    return Response(content=resp.content, status_code=resp.status_code,
-                    media_type=resp.headers.get("content-type", "application/json"))
+    body = resp.json() if resp.content else None
+    _record_calls(name, party, payload, body)
+    return body
+
+
+@app.post("/agents/{name}/mcp")
+async def forward(name: str, request: Request):
+    body = await _process(name, json.loads(await request.body() or b"{}"))
+    return Response(status_code=202) if body is None else JSONResponse(body)
 
 
 @app.get("/agents/{name}/mcp")
 def forward_get(name: str):
     return Response(status_code=405)
+
+
+@app.post("/agents/{name}/ask")
+async def ask(name: str, request: Request):
+    """Vendor portal: send one tool call through an agent and return what came back."""
+    b = await request.json()
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": b.get("tool", "ask_question"), "arguments": b.get("arguments") or {}}}
+    body = await _process(name, payload) or {}
+    result = body.get("result") or {}
+    text = "".join(c.get("text", "") for c in result.get("content", [])) or body.get("error", {}).get("message", "")
+    return {"text": text, "denied": bool(result.get("isError")) or "error" in body}
 
 
 @app.get("/agents/{name}/stolen-token")
@@ -174,6 +235,93 @@ def stolen_token(name: str):
     if name not in agents:
         return JSONResponse({"error": "unknown agent"}, status_code=404)
     return {"access_token": agents[name]["token"]}
+
+
+def _agent_status(name: str) -> str:
+    calls = [h for h in history if h["agent"] == name and h["kind"] == "call"]
+    reason = (calls[-1].get("reason") or "").lower() if calls else ""
+    if "revoked" in reason:
+        return "stopped"
+    if "locked" in reason:
+        return "locked"
+    return "active"
+
+
+@app.post("/api/vendor/onboard")
+async def onboard(request: Request):
+    """A new vendor accepts Falcon's invite: create its company login, then register it with VendorVault."""
+    b = await request.json()
+    code = (b.get("invite_code") or "").strip().upper()
+    users = [u.strip() for u in b.get("users", []) if "@" in u]
+    if not users:
+        return JSONResponse({"error": "Add at least one employee email"}, status_code=400)
+    # The invite, not the vendor, decides which company this is.
+    invite = await run_in_threadpool(http.get, f"{cfg['gateway_url']}/api/vendors/invite/{code}")
+    if invite.status_code != 200:
+        return JSONResponse({"error": invite.json().get("error", "Invite not found")}, status_code=404)
+    name = invite.json()["name"]
+    if name in idps:
+        return JSONResponse({"error": f"{name} already has a company login here"}, status_code=409)
+    idp = PartyIdP(cfg, name, users)
+    idps[name] = idp  # must exist before VendorVault calls back for its signing keys
+    resp = await run_in_threadpool(http.post, f"{cfg['gateway_url']}/api/vendors/connect",
+                                   json={"invite_code": code, "issuer": idp.issuer})
+    body = resp.json()
+    if resp.status_code != 200:
+        del idps[name]
+        return JSONResponse({"error": body.get("error", "Falcon rejected the invite")}, status_code=resp.status_code)
+    record(kind="onboard", party=name, agent="", decision="allowed",
+           reason=f"Connected company login {idp.issuer}", folders=body["folders"], scope=body["scope"])
+    return {**body, "issuer": idp.issuer, "users": users}
+
+
+@app.get("/api/vendor/invite/{code}")
+async def preview_invite(code: str):
+    resp = await run_in_threadpool(http.get, f"{cfg['gateway_url']}/api/vendors/invite/{code.strip().upper()}")
+    return JSONResponse(resp.json(), status_code=resp.status_code)
+
+
+@app.post("/api/vendor/{party}/users")
+async def add_user(party: str, request: Request):
+    if party not in idps:
+        return JSONResponse({"error": f"unknown vendor {party}"}, status_code=404)
+    user = ((await request.json()).get("user") or "").strip()
+    if "@" not in user:
+        return JSONResponse({"error": "Enter an employee email"}, status_code=400)
+    idps[party].users.add(user)
+    return {"users": sorted(idps[party].users)}
+
+
+@app.get("/api/vendors")
+def vendor_list():
+    return [{"name": n, "issuer": i.issuer, "issuing": i.issuing,
+             "agents": sum(1 for a in agents.values() if a["party"] == n)} for n, i in idps.items()]
+
+
+@app.get("/api/vendor/{party}")
+def vendor_state(party: str):
+    if party not in idps:
+        return JSONResponse({"error": f"unknown vendor {party}"}, status_code=404)
+    idp, now = idps[party], time.time()
+    mine = [{**public(a), "expires_in": max(0, int(a["exp"] - now)) if a.get("token") else 0,
+             "status": _agent_status(a["name"])} for a in agents.values() if a["party"] == party]
+    try:  # the vendor only learns its own terms from Falcon, never Falcon's dashboard data
+        terms = http.get(f"{cfg['gateway_url']}/api/vendors/{party}/terms", timeout=5)
+        access = terms.json() if terms.status_code == 200 else None
+    except httpx.HTTPError:
+        access = None
+    return {
+        "client": cfg.get("client", "Falcon Analytics"),
+        "access": access,
+        "party": party,
+        "issuer": idp.issuer,
+        "issuing": idp.issuing,
+        "id_jags_issued": idp.issued,
+        "users": sorted(idp.users),
+        "deal": cfg["deal"],
+        "agents": mine,
+        "history": [h for h in history if h["party"] == party][-150:],
+    }
 
 
 @app.get("/idp/{party}/jwks")
@@ -202,11 +350,28 @@ def idp_resume(party: str):
 @app.post("/reset")
 def reset():
     agents.clear()
-    for idp in idps.values():
-        idp.issuing = True
+    history.clear()
+    idps.clear()
+    idps.update(configured_idps())  # vendors onboarded during the demo are forgotten
     return {"reset": True}
 
 
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+
+# The vendor platform (a separate web app from Falcon's dashboard) is served from here.
+DIST = ROOT / "dashboard" / "dist"
+
+
+@app.get("/")
+def vendor_portal():
+    page = DIST / "vendor.html"
+    if not page.exists():
+        return JSONResponse({"error": "Vendor portal not built yet. Run ./run.sh or npm --prefix dashboard run build"}, status_code=503)
+    return FileResponse(page)
+
+
+if (DIST / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")

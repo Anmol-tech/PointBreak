@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import secrets
 from urllib.parse import parse_qs
 
 import httpx
@@ -68,8 +69,10 @@ TOOL_SCOPE = {"list_folders": "vault:list", "ask_question": "vault:ask",
 
 
 def invite_parties():
-    for name, p in cfg["parties"].items():
-        store.add_party(name, issuer_for(cfg, name), p["folders"], p["scope"])
+    """Vendors from config.json start already onboarded; new ones are added through /api/vendors."""
+    for name, p in cfg["vendors"].items():
+        store.add_party(name, issuer_for(cfg, name), p["folders"], p["scope"],
+                        purpose=p.get("purpose", ""), contact=p.get("contact", ""))
 
 
 invite_parties()
@@ -132,7 +135,7 @@ async def token(request: Request):
         if grant == JWT_BEARER:
             # May fetch the party IdP's JWKS over the network, so keep it off the event loop.
             agent, tok, ttl = await run_in_threadpool(identity.issue_root, form.get("assertion", ""), proof, url)
-            how = "root identity issued from the party's ID-JAG"
+            how = "agent badge issued from the vendor's ID-JAG"
         elif grant == TOKEN_EXCHANGE:
             scope = form["scope"].split() if form.get("scope") else None
             folders = json.loads(form["folders"]) if form.get("folders") else None
@@ -330,6 +333,7 @@ def state():
                 "shared_with": [p["name"] for p in store.parties.values() if f in p["folders"]],
             })
         return {
+            "client": cfg.get("client", "Falcon Analytics"),
             "deal": cfg["deal"],
             "version": store.version,
             "thresholds": {"alert": cfg["coverage_alert"], "lock": cfg["coverage_lock"]},
@@ -354,6 +358,89 @@ def run_demo(name: str):
     if not demo.start(name, _bump):
         return JSONResponse({"error": f"{demo.running} is still running"}, status_code=409)
     return JSONResponse({"started": name}, status_code=202)
+
+
+@app.post("/api/vendors")
+async def invite_vendor(request: Request):
+    """Falcon onboards a new vendor: what work it does decides which folders and actions its agents get."""
+    b = await request.json()
+    name = (b.get("name") or "").strip()
+    if not name or not name.replace("-", "").replace(" ", "").isalnum():
+        return JSONResponse({"error": "Vendor name must be letters, numbers, spaces or dashes"}, status_code=400)
+    name = name.replace(" ", "")
+    if name in store.parties and store.parties[name]["status"] != "offboarded":
+        return JSONResponse({"error": f"{name} is already a vendor"}, status_code=409)
+    folders = [f for f in b.get("folders", []) if f in vault.folders()]
+    scope = [s for s in b.get("scope", ["vault:ask", "vault:list"]) if s in ("vault:ask", "vault:list")]
+    code = "VV-" + secrets.token_hex(2).upper() + "-" + secrets.token_hex(2).upper()
+    store.add_party(name, None, folders, scope, purpose=(b.get("purpose") or "").strip(),
+                    contact=(b.get("contact") or "").strip(), status="invited", invite_code=code)
+    store.log(kind="vendor", decision="info", party=name, agent=None, chain=[name],
+              reason=f"Invited {name} for “{store.parties[name]['purpose'] or 'unspecified work'}”. "
+                     f"Its agents may ask about {', '.join(folders) or 'nothing yet'}. Invite code {code}")
+    return {"name": name, "invite_code": code, "status": "invited"}
+
+
+@app.get("/api/vendors/invite/{code}")
+def lookup_invite(code: str):
+    """What the invited vendor sees before accepting: who invited it, for what work, with what access."""
+    party = store.party_by_invite(code.strip().upper())
+    if not party:
+        return JSONResponse({"error": "Invite code not found or already used"}, status_code=404)
+    return {"name": party["name"], "client": cfg.get("client", "Falcon Analytics"), "purpose": party["purpose"],
+            "folders": party["folders"], "scope": party["scope"], "contact": party["contact"]}
+
+
+@app.get("/api/vendors/{name}/terms")
+def vendor_terms(name: str):
+    """The narrow view a vendor platform gets: only its own access terms, nothing about other vendors."""
+    party = store.parties.get(name)
+    if not party:
+        return JSONResponse({"error": "unknown vendor"}, status_code=404)
+    return {"name": name, "client": cfg.get("client", "Falcon Analytics"), "purpose": party["purpose"],
+            "folders": party["folders"], "scope": party["scope"], "status": party["status"],
+            "locked": party["locked"], "lock_reason": party["lock_reason"]}
+
+
+@app.post("/api/vendors/connect")
+async def connect_vendor(request: Request):
+    """The vendor accepts the invite by registering its own company login (identity provider)."""
+    b = await request.json()
+    party = store.party_by_invite((b.get("invite_code") or "").strip().upper())
+    if not party:
+        return JSONResponse({"error": "Invite code not found or already used"}, status_code=404)
+    issuer = (b.get("issuer") or "").rstrip("/")
+    try:
+        # Prove the vendor's login is reachable and publishes signing keys before trusting it.
+        resp = await run_in_threadpool(httpx.get, f"{issuer}/jwks", timeout=5)
+        resp.raise_for_status()
+        if not resp.json().get("keys"):
+            raise ValueError("no signing keys")
+    except (httpx.HTTPError, ValueError) as e:
+        return JSONResponse({"error": f"Could not verify the vendor's login at {issuer} ({e})"}, status_code=400)
+    with store.lock:
+        party.update(issuer=issuer, status="active", invite_code=None)
+        store.bump()
+    identity.jwks_cache.pop(issuer, None)
+    store.log(kind="vendor", decision="allowed", party=party["name"], agent=None, chain=[party["name"]],
+              reason=f"{party['name']} connected its company login ({issuer}). Its agents can now get badges.")
+    return {"name": party["name"], "status": "active", "folders": party["folders"], "scope": party["scope"],
+            "purpose": party["purpose"]}
+
+
+@app.post("/api/vendors/{name}/offboard")
+def offboard_vendor(name: str):
+    if name not in store.parties:
+        return JSONResponse({"error": "unknown vendor"}, status_code=404)
+    roots = [a["id"] for a in store.agents.values() if a["party"] == name and not a["parent"]]
+    for agent_id in roots:
+        store.revoke_agent(agent_id, f"{name} was offboarded")
+    with store.lock:
+        store.parties[name].update(status="offboarded", locked=True, lock_reason="vendor offboarded", invite_code=None)
+        store.bump()
+    store.log(kind="vendor", decision="alert", party=name, agent=None, chain=[name],
+              reason=f"Offboarded {name}: its login is no longer trusted and all its agents were stopped")
+    return {"offboarded": name}
 
 
 @app.post("/api/agents/{agent_id}/revoke")

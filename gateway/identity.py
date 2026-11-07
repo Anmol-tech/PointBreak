@@ -52,7 +52,7 @@ class Identity:
             raise AuthError("assertion is not an ID-JAG")
         party = self.store.party_by_issuer(unverified.get("iss", ""))
         if not party:
-            raise AuthError(f"issuer {unverified.get('iss')} is not a party to this deal")
+            raise AuthError(f"issuer {unverified.get('iss')} is not an onboarded vendor")
         claims = None
         for refresh in (False, True):
             try:

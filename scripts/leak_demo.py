@@ -1,4 +1,4 @@
-"""A BuyerCo answer shows up outside the deal; the owner traces it back to the exact agent chain.
+"""A vendor answer shows up outside the company; Falcon traces it back to the exact agent chain.
 
 Usage: python -m scripts.leak_demo [agent-name]
 """
@@ -11,7 +11,7 @@ import httpx
 from party.client import GATEWAY_URL, PROXY_URL, McpAgent
 
 
-def run(agent: str = "legal-agent", proxy: str = PROXY_URL, gateway: str = GATEWAY_URL) -> tuple[dict, dict]:
+def run(agent: str = "contracts-reviewer", proxy: str = PROXY_URL, gateway: str = GATEWAY_URL) -> tuple[dict, dict]:
     text, denied = McpAgent(agent, proxy).tool("ask_question", question="What are the Globex change of control terms?")
     if denied:
         raise SystemExit(f"{agent} could not get an answer: {text}")
@@ -30,4 +30,4 @@ def run(agent: str = "legal-agent", proxy: str = PROXY_URL, gateway: str = GATEW
 
 
 if __name__ == "__main__":
-    run(sys.argv[1] if len(sys.argv) > 1 else "legal-agent")
+    run(sys.argv[1] if len(sys.argv) > 1 else "contracts-reviewer")

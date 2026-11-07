@@ -1,7 +1,13 @@
 import type { DemoStatus } from '../types'
 import { Icon } from './Icon'
 
-const ORDER = [['team', 'Agent team'], ['stolen', 'Stolen token'], ['scrape', 'Split scraping'], ['leak', 'Leak trace']] as const
+const ORDER = [
+  ['team', 'Vendor agent team'],
+  ['onboard', 'Onboard a new vendor'],
+  ['stolen', 'Stolen badge'],
+  ['scrape', 'Compromised vendor tool'],
+  ['leak', 'Leak trace'],
+] as const
 
 export function DemoControls({ demo, pending, onRun }: { demo: DemoStatus; pending: boolean; onRun: (name: string) => void }) {
   const busy = demo.running !== null || pending

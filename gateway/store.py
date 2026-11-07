@@ -25,13 +25,20 @@ class MemoryStore:
         self.version += 1
 
     # --- parties -------------------------------------------------------
-    def add_party(self, name: str, issuer: str, folders: list[str], scope: list[str]):
+    def add_party(self, name: str, issuer: str | None, folders: list[str], scope: list[str], *,
+                  purpose: str = "", contact: str = "", status: str = "active", invite_code: str | None = None):
+        """A vendor company. Status: invited (waiting to connect its login) → active → offboarded."""
         with self.lock:
             self.parties[name] = {
                 "name": name,
                 "issuer": issuer,
                 "folders": list(folders),
                 "scope": list(scope),
+                "purpose": purpose,
+                "contact": contact,
+                "status": status,
+                "invite_code": invite_code,
+                "created": time.time(),
                 "locked": False,
                 "lock_reason": None,
                 "alerted": False,
@@ -40,7 +47,11 @@ class MemoryStore:
             self.bump()
 
     def party_by_issuer(self, issuer: str) -> dict | None:
-        return next((p for p in self.parties.values() if p["issuer"] == issuer), None)
+        """Only an active vendor's login can vouch for agents."""
+        return next((p for p in self.parties.values() if p["issuer"] == issuer and p["status"] == "active"), None)
+
+    def party_by_invite(self, code: str) -> dict | None:
+        return next((p for p in self.parties.values() if p["invite_code"] == code and p["status"] == "invited"), None)
 
     def set_party_lock(self, name: str, locked: bool, reason: str | None):
         with self.lock:

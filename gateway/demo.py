@@ -3,11 +3,22 @@
 import threading
 import time
 
+import httpx
+
 SCENARIOS = {
-    "team": "BuyerCo agent team",
-    "stolen": "Stolen token attack",
-    "scrape": "Split scraping attack",
+    "team": "Vendor agent team",
+    "onboard": "Onboard a new vendor",
+    "stolen": "Stolen badge",
+    "scrape": "Compromised vendor tool",
     "leak": "Leak trace",
+}
+
+NEW_VENDOR = {
+    "name": "Northbeam",
+    "purpose": "Customer market analysis",
+    "contact": "maya@northbeam.co",
+    "folders": ["Customers"],
+    "scope": ["vault:ask", "vault:list"],
 }
 
 
@@ -16,34 +27,57 @@ def _team():
     return run_team(pause=1.2)
 
 
+def _onboard():
+    """Falcon invites a new vendor, the vendor connects its login, then its first agent gets a scoped badge."""
+    from common.config import load
+    from party.client import McpAgent, create_root
+    cfg = load()
+    invite = httpx.post(f"{cfg['gateway_url']}/api/vendors", json=NEW_VENDOR, timeout=10)
+    if invite.status_code != 200:
+        raise RuntimeError(invite.json().get("error", "invite failed"))
+    code = invite.json()["invite_code"]
+    time.sleep(2.5)  # let the audience see the vendor sitting in "Invited"
+    joined = httpx.post(f"{cfg['party_sim_url']}/api/vendor/onboard",
+                        json={"invite_code": code, "users": [NEW_VENDOR["contact"]]}, timeout=20)
+    if joined.status_code != 200:
+        raise RuntimeError(joined.json().get("error", "vendor could not connect"))
+    time.sleep(2)
+    create_root("Northbeam", NEW_VENDOR["contact"], "northbeam-analyst")
+    agent = McpAgent("northbeam-analyst")
+    agent.tool("ask_question", question="Which customers are the largest and how concentrated is revenue?")
+    agent.tool("ask_question", question="What are the Globex change of control terms?", folder="Contracts")
+    return f"Northbeam onboarded with invite {code}: its agent asked about Customers and was blocked from Contracts"
+
+
 def _stolen():
     from scripts.stolen_token_attack import run
-    results = run("finance-agent")
+    results = run("contracts-reviewer")
     blocked = sum(1 for _, denied in results if denied)
-    return f"Attacker replayed finance-agent's token twice; {blocked} of 2 attempts blocked"
+    return f"Attacker replayed contracts-reviewer's badge twice; {blocked} of 2 attempts blocked"
 
 
 def _scrape():
     from scripts.split_scrape_attack import run
     party = run(pause=0.35)
-    return f"RivalBid reached {party['coverage']:.0%} coverage; locked={party['locked']}"
+    return f"Ledgerly's agents reached {party['coverage']:.0%} of its folders; locked={party['locked']}"
 
 
 def _leak():
     from scripts.leak_demo import run
-    with_marks, _ = run("legal-agent")
+    with_marks, _ = run("contracts-reviewer")
     if not with_marks["matches"]:
         return "No matching agent found"
     return "Leak traced to " + " ← ".join(reversed(with_marks["matches"][0]["chain"]))
 
 
-RUNNERS = {"team": _team, "stolen": _stolen, "scrape": _scrape, "leak": _leak}
+RUNNERS = {"team": _team, "onboard": _onboard, "stolen": _stolen, "scrape": _scrape, "leak": _leak}
 
 HINTS = {
-    "unknown agent": "Run 'BuyerCo agent team' first.",
-    "not registered": "Run 'BuyerCo agent team' first.",
-    "revoked": "Some agents are revoked. Click Reset demo first.",
-    "locked": "That company is locked. Click Reset demo first.",
+    "unknown agent": "Run 'Vendor agent team' first.",
+    "not registered": "Run 'Vendor agent team' first.",
+    "already a vendor": "Northbeam is already onboarded. Click Reset demo first.",
+    "revoked": "Some agents are stopped. Click Reset demo first.",
+    "locked": "That vendor is locked. Click Reset demo first.",
 }
 
 

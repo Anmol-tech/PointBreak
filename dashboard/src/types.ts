@@ -4,7 +4,7 @@ export type ActionHandler = (label: string, action: () => Promise<unknown>) => P
 export interface VaultEvent {
   id: number
   ts: number
-  kind: 'token' | 'call' | 'revoke' | 'lock' | 'alert' | 'trace' | 'share'
+  kind: 'token' | 'call' | 'revoke' | 'lock' | 'alert' | 'trace' | 'share' | 'vendor'
   decision: Decision
   party: string | null
   agent: string | null
@@ -17,11 +17,16 @@ export interface VaultEvent {
   detail?: { scope?: string[]; folders?: string[] }
 }
 
+/** A vendor company bringing AI agents. */
 export interface Party {
   name: string
-  issuer: string
+  issuer: string | null
   folders: string[]
   scope: string[]
+  purpose: string
+  contact: string
+  status: 'invited' | 'active' | 'offboarded'
+  invite_code: string | null
   locked: boolean
   lock_reason: string | null
   coverage: number
@@ -62,6 +67,7 @@ export interface DemoStatus {
 }
 
 export interface VaultState {
+  client: string
   deal: string
   version: number
   thresholds: { alert: number; lock: number }
@@ -71,6 +77,60 @@ export interface VaultState {
   events: VaultEvent[]
   demo: DemoStatus
   answer_engine: string
+}
+
+export interface VendorAgent {
+  name: string
+  party: string
+  user: string
+  parent: string | null
+  agent_id: string | null
+  granted_scope: string[] | null
+  granted_folders: string[] | null
+  expires_in: number
+  status: 'active' | 'stopped' | 'locked'
+}
+
+export interface VendorEntry {
+  id: number
+  ts: number
+  kind: 'badge' | 'call' | 'onboard'
+  party: string | null
+  agent: string
+  user?: string
+  parent?: string | null
+  decision: 'allowed' | 'denied'
+  tool?: string
+  args?: { question?: string; folder?: string; path?: string }
+  text?: string
+  reason?: string | null
+  folders?: string[]
+  scope?: string[]
+}
+
+/** What a vendor platform learns from Falcon: only its own terms. */
+export interface VendorTerms {
+  name: string
+  client: string
+  purpose: string
+  folders: string[]
+  scope: string[]
+  status: 'invited' | 'active' | 'offboarded'
+  locked: boolean
+  lock_reason: string | null
+}
+
+export interface VendorState {
+  client: string
+  access: VendorTerms | null
+  party: string
+  issuer: string
+  issuing: boolean
+  id_jags_issued: number
+  users: string[]
+  deal: string
+  agents: VendorAgent[]
+  history: VendorEntry[]
 }
 
 export interface TraceMatch {

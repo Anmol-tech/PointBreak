@@ -57,7 +57,7 @@ const CALL_CHECKS = [
   { label: 'Badge is real and not expired', keys: ['no agent identity', 'access token', 'expired', 'unknown agent'] },
   { label: "Request is signed with the agent's own secret key", keys: ['dpop', 'different key', 'replayed'] },
   { label: 'Agent, and whoever created it, is still allowed in', keys: ['revoked'] },
-  { label: 'Company is not locked out', keys: ['locked'] },
+  { label: 'Vendor is not locked out or offboarded', keys: ['locked', 'offboarded'] },
   { label: 'This action is allowed for this agent', keys: ['never leave', 'bulk export', 'not allowed for this agent', 'unknown tool'] },
   { label: 'Folder is shared with this agent', keys: ['folder'] },
 ]
@@ -124,7 +124,7 @@ function badgeStory(e: VaultEvent): Story {
     ]
     const idx = failAt(reason, [
       ['stopped issuing', 'not a ', 'may not run'],
-      ['issuer', 'signature', 'id-jag', 'deal', 'already been used', 'reach'],
+      ['issuer', 'onboarded vendor', 'signature', 'id-jag', 'deal', 'already been used', 'reach'],
       ['dpop', 'key proof'],
       ['more access', 'revoked', 'locked', 'already used by another'],
     ], 1)

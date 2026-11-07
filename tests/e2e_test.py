@@ -1,6 +1,6 @@
-"""End-to-end check of the required A10 demo plus the multi-agent and data-protection features.
+"""End-to-end check of the required A10 demo, vendor onboarding, multi-agent delegation and data protection.
 
-Starts its own gateway (:8100) and party runtime (:9101), so it can run beside a live demo.
+Starts its own gateway (:8100) and vendor runtime (:9101), so it can run beside a live demo.
 Usage: .venv/bin/python -m tests.e2e_test
 """
 
@@ -24,6 +24,7 @@ from scripts import leak_demo, split_scrape_attack, stolen_token_attack  # noqa:
 FAILED: list[str] = []
 SSN = re.compile(r"\d{3}-\d{2}-\d{4}")
 INVISIBLE = re.compile("[​‌﻿]")
+JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 
 
 def check(name: str, cond: bool, detail: str = ""):
@@ -54,6 +55,17 @@ def mcp_raw(headers: dict) -> dict:
     return httpx.post(f"{GATEWAY}/mcp", json=body, headers=headers, timeout=10).json()["result"]
 
 
+def forged_token_request(claims: dict, key) -> httpx.Response:
+    assertion = jwt.encode(claims, key, "ES256", headers={"typ": "oauth-id-jag+jwt"})
+    return httpx.post(f"{GATEWAY}/token", data={"grant_type": JWT_BEARER, "assertion": assertion},
+                      headers={"DPoP": make_proof(key, "POST", f"{GATEWAY}/token")})
+
+
+def ask(agent: McpAgent, question: str, folder: str | None = None) -> tuple[str, bool]:
+    text, denied = agent.tool("ask_question", **({"question": question, "folder": folder} if folder else {"question": question}))
+    return INVISIBLE.sub("", text), denied
+
+
 def main():
     procs = [start("gateway.app:app", 8100), start("party.proxy:app", 9101)]
     try:
@@ -65,104 +77,136 @@ def main():
         check("no token is denied", r["isError"] and "no agent identity" in r["content"][0]["text"], str(r))
 
         # 2. Forged ID-JAGs never become tokens
-        k = new_key()
-        now = int(time.time())
-        forged = {"iss": f"{PROXY}/idp/BuyerCo", "sub": "alice@buyerco.com", "aud": "https://vendorvault.local",
+        k, now = new_key(), int(time.time())
+        forged = {"iss": f"{PROXY}/idp/LexPartners", "sub": "dana@lexpartners.com", "aud": "https://vendorvault.local",
                   "client_id": "evil", "resource": "project-falcon", "iat": now, "exp": now + 300, "jti": "x1"}
-        hdr = {"typ": "oauth-id-jag+jwt"}
-        resp = httpx.post(f"{GATEWAY}/token", data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                                                     "assertion": jwt.encode(forged, k, "ES256", headers=hdr)},
-                          headers={"DPoP": make_proof(k, "POST", f"{GATEWAY}/token")})
+        resp = forged_token_request(forged, k)
         check("ID-JAG signed by the wrong key is refused", resp.status_code == 400 and "signature" in resp.text, resp.text)
-        forged.update(iss="https://idp.evil.example", jti="x2")
-        resp = httpx.post(f"{GATEWAY}/token", data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                                                     "assertion": jwt.encode(forged, k, "ES256", headers=hdr)},
-                          headers={"DPoP": make_proof(k, "POST", f"{GATEWAY}/token")})
-        check("ID-JAG from an untrusted issuer is refused", resp.status_code == 400 and "not a party" in resp.text, resp.text)
+        resp = forged_token_request({**forged, "iss": "https://idp.evil.example", "jti": "x2"}, k)
+        check("ID-JAG from a non-vendor is refused", resp.status_code == 400 and "not an onboarded vendor" in resp.text, resp.text)
 
-        # 3. Authenticate a real agent and use an allowed tool
-        create_root("BuyerCo", "alice@buyerco.com", "buyer-orchestrator", proxy=PROXY)
-        boss = McpAgent("buyer-orchestrator", PROXY)
-        init = boss.initialize()
-        check("authenticated agent can initialize MCP", "result" in init, str(init))
-        tools = [t["name"] for t in boss.rpc("tools/list")["result"]["tools"]]
+        # 3. Authenticate a vendor's agent and use an allowed tool
+        lead_info = create_root("LexPartners", "dana@lexpartners.com", "lex-lead", proxy=PROXY)
+        check("agent badge is limited to the vendor's folders",
+              lead_info["granted_folders"] == ["Contracts", "Customers"], str(lead_info))
+        lead = McpAgent("lex-lead", PROXY)
+        check("authenticated agent can initialize MCP", "result" in lead.initialize())
+        tools = [t["name"] for t in lead.rpc("tools/list")["result"]["tools"]]
         check("tools are listed", "ask_question" in tools, str(tools))
-        text, denied = boss.tool("ask_question", question="Key employees email SSN salary", folder="HR")
-        text = INVISIBLE.sub("", text)
+        text, denied = ask(lead, "Key contacts email phone", "Customers")
         check("allowed question is answered", not denied and "Answer from" in text, text)
-        check("table rows never leave, only totals", "row-level data withheld" in text and not SSN.search(text), text)
-        text, denied = boss.tool("ask_question", question="Key contacts email phone", folder="Customers")
-        text = INVISIBLE.sub("", text)
         check("contact names, emails and phones are masked",
-              not denied and "@" not in text and "555" not in text and "Dana Whitfield" not in text, text)
+              "@" not in text and "555" not in text and "Dana Whitfield" not in text, text)
 
-        # 4. Disallowed tools and folders
-        text, denied = boss.tool("get_document", path="HR/employee-roster.md")
+        # 4. Disallowed tools, folders outside the vendor's work, unshared folders
+        text, denied = lead.tool("get_document", path="Contracts/globex-customer-agreement.md")
         check("get_document is denied", denied and "never leave the vault" in text, text)
-        text, denied = boss.tool("export_all")
+        text, denied = lead.tool("export_all")
         check("export_all is denied", denied, text)
-        text, denied = boss.tool("ask_question", question="minimum price", folder="Board Minutes")
+        text, denied = ask(lead, "quarterly revenue", "Financials")
+        check("folder outside the vendor's work is denied", denied and "not shared" in text, text)
+        text, denied = ask(lead, "minimum price", "Board Minutes")
         check("unshared folder is denied", denied and "not shared" in text, text)
 
-        # 5. Sub-agents get narrower identities
+        # 5. Tables only leave as totals (Ledgerly's audit work covers HR)
+        create_root("Ledgerly", "li@ledgerly.io", "ledgerly-check", proxy=PROXY)
+        text, denied = ask(McpAgent("ledgerly-check", PROXY), "Key employees email SSN salary", "HR")
+        check("table rows never leave, only totals", not denied and "row-level data withheld" in text and not SSN.search(text), text)
+
+        # 6. Sub-agents get narrower identities
         try:
-            spawn("buyer-orchestrator", "greedy-agent", folders=["Board Minutes"], proxy=PROXY)
-            check("sub-agent asking for more than its parent is refused", False, "spawn succeeded")
+            spawn("lex-lead", "greedy-agent", folders=["Financials"], proxy=PROXY)
+            check("helper asking for more than its parent is refused", False, "spawn succeeded")
         except PartyError as e:
-            check("sub-agent asking for more than its parent is refused", "more access than its parent" in str(e), str(e))
-        spawn("buyer-orchestrator", "legal-agent", folders=["Contracts", "Customers"], proxy=PROXY)
-        spawn("buyer-orchestrator", "finance-agent", folders=["Financials"], proxy=PROXY)
-        legal, finance = McpAgent("legal-agent", PROXY), McpAgent("finance-agent", PROXY)
-        text, denied = finance.tool("ask_question", question="quarterly revenue")
-        check("finance sub-agent can ask in its folder", not denied, text)
-        text, denied = finance.tool("ask_question", question="change of control", folder="Contracts")
-        check("finance sub-agent cannot use legal's folder", denied, text)
+            check("helper asking for more than its parent is refused", "more access than its parent" in str(e), str(e))
+        spawn("lex-lead", "contracts-reviewer", folders=["Contracts"], proxy=PROXY)
+        spawn("lex-lead", "customer-reviewer", folders=["Customers"], proxy=PROXY)
+        contracts, customers = McpAgent("contracts-reviewer", PROXY), McpAgent("customer-reviewer", PROXY)
+        text, denied = ask(customers, "top customers")
+        check("helper can ask in its own folder", not denied, text)
+        text, denied = ask(customers, "change of control", "Contracts")
+        check("helper cannot use its sibling's folder", denied, text)
 
-        # 6. Stolen token replay
-        results = stolen_token_attack.run("finance-agent", PROXY, GATEWAY)
-        check("stolen token without a proof is denied", results[0][1] and "DPoP proof required" in results[0][0], results[0][0])
-        check("stolen token with the attacker's key is denied", results[1][1] and "different key" in results[1][0], results[1][0])
+        # 7. Stolen badge replay
+        results = stolen_token_attack.run("contracts-reviewer", PROXY, GATEWAY)
+        check("stolen badge without a proof is denied", results[0][1] and "DPoP proof required" in results[0][0], results[0][0])
+        check("stolen badge with the attacker's key is denied", results[1][1] and "different key" in results[1][0], results[1][0])
 
-        # 7. Leak tracing
-        with_marks, stripped = leak_demo.run("legal-agent", PROXY, GATEWAY)
+        # 8. Leak tracing
+        with_marks, stripped = leak_demo.run("contracts-reviewer", PROXY, GATEWAY)
         check("leak traced by invisible fingerprint",
-              bool(with_marks["matches"]) and with_marks["matches"][0]["agent_id"] == "BuyerCo:legal-agent", str(with_marks))
+              bool(with_marks["matches"]) and with_marks["matches"][0]["agent_id"] == "LexPartners:contracts-reviewer", str(with_marks))
         check("leak traced by text match when marks are stripped",
-              bool(stripped["matches"]) and stripped["matches"][0]["agent_id"] == "BuyerCo:legal-agent", str(stripped))
+              bool(stripped["matches"]) and stripped["matches"][0]["agent_id"] == "LexPartners:contracts-reviewer", str(stripped))
 
-        # 8. Revocation mid-task: one agent, then the whole branch
-        httpx.post(f"{GATEWAY}/api/agents/BuyerCo:finance-agent/revoke")
-        text, denied = finance.tool("ask_question", question="quarterly revenue")
-        check("revoked agent's next call is blocked", denied and "revoked" in text, text)
-        text, denied = legal.tool("ask_question", question="Northwind fees")
-        check("sibling keeps working after revoke", not denied, text)
-        httpx.post(f"{GATEWAY}/api/agents/BuyerCo:buyer-orchestrator/revoke")
-        text, denied = legal.tool("ask_question", question="Northwind fees")
-        check("revoking the parent cascades to sub-agents", denied and "revoked" in text, text)
+        # 9. Revocation mid-task: one agent, then the whole branch
+        httpx.post(f"{GATEWAY}/api/agents/LexPartners:customer-reviewer/revoke")
+        text, denied = ask(customers, "top customers")
+        check("stopped agent's next call is blocked", denied and "revoked" in text, text)
+        text, denied = ask(contracts, "Northwind fees")
+        check("sibling keeps working after a stop", not denied, text)
+        httpx.post(f"{GATEWAY}/api/agents/LexPartners:lex-lead/revoke")
+        text, denied = ask(contracts, "Northwind fees")
+        check("stopping the parent cascades to helpers", denied and "revoked" in text, text)
         try:
-            create_root("BuyerCo", "alice@buyerco.com", "buyer-orchestrator", proxy=PROXY)
-            check("revoked agent cannot re-authenticate", False, "re-auth succeeded")
+            create_root("LexPartners", "dana@lexpartners.com", "lex-lead", proxy=PROXY)
+            check("stopped agent cannot re-authenticate", False, "re-auth succeeded")
         except PartyError as e:
-            check("revoked agent cannot re-authenticate", "revoked" in str(e), str(e))
+            check("stopped agent cannot re-authenticate", "revoked" in str(e), str(e))
 
-        # 9. Party admin stops issuing ID-JAGs
-        httpx.post(f"{PROXY}/idp/BuyerCo/stop")
+        # 10. The vendor's own admin stops issuing badges
+        httpx.post(f"{PROXY}/idp/LexPartners/stop")
         try:
-            create_root("BuyerCo", "bob@buyerco.com", "bob-agent", proxy=PROXY)
-            check("party IdP stop blocks new agents", False, "agent created")
+            create_root("LexPartners", "omar@lexpartners.com", "omar-agent", proxy=PROXY)
+            check("vendor login stop blocks new agents", False, "agent created")
         except PartyError as e:
-            check("party IdP stop blocks new agents", "stopped issuing" in str(e), str(e))
-        httpx.post(f"{PROXY}/idp/BuyerCo/resume")
+            check("vendor login stop blocks new agents", "stopped issuing" in str(e), str(e))
+        httpx.post(f"{PROXY}/idp/LexPartners/resume")
 
-        # 10. Split scraping across several agents trips the company-wide coverage lock
+        # 11. Onboarding a brand-new vendor
+        invite = httpx.post(f"{GATEWAY}/api/vendors", json={"name": "Northbeam", "purpose": "Customer market analysis",
+                                                            "contact": "maya@northbeam.co", "folders": ["Customers"]}).json()
+        code = invite.get("invite_code", "")
+        check("Falcon creates an invite for a new vendor", invite.get("status") == "invited" and code.startswith("VV-"), str(invite))
+        state = httpx.get(f"{GATEWAY}/api/state").json()
+        nb = next(p for p in state["parties"] if p["name"] == "Northbeam")
+        check("invited vendor is not trusted yet", nb["status"] == "invited" and nb["issuer"] is None, str(nb))
+        preview = httpx.get(f"{PROXY}/api/vendor/invite/{code}").json()
+        check("vendor sees who invited it and for what work",
+              preview.get("purpose") == "Customer market analysis" and preview.get("folders") == ["Customers"], str(preview))
+        bad = httpx.post(f"{PROXY}/api/vendor/onboard", json={"invite_code": "VV-0000-0000", "users": ["maya@northbeam.co"]})
+        check("wrong invite code is refused", bad.status_code == 404, bad.text)
+        joined = httpx.post(f"{PROXY}/api/vendor/onboard", json={"invite_code": code, "users": ["maya@northbeam.co"]})
+        check("vendor connects its company login", joined.status_code == 200 and joined.json()["status"] == "active", joined.text)
+        again = httpx.post(f"{PROXY}/api/vendor/onboard", json={"invite_code": code, "users": ["x@evil.co"]})
+        check("invite code cannot be reused", again.status_code in (404, 409), again.text)
+        nb_info = create_root("Northbeam", "maya@northbeam.co", "northbeam-analyst", proxy=PROXY)
+        check("new vendor's agent gets a badge scoped to its work", nb_info["granted_folders"] == ["Customers"], str(nb_info))
+        analyst = McpAgent("northbeam-analyst", PROXY)
+        text, denied = ask(analyst, "largest customers")
+        check("new vendor's agent can ask within its scope", not denied, text)
+        text, denied = ask(analyst, "change of control", "Contracts")
+        check("new vendor's agent is blocked outside its scope", denied and "not shared" in text, text)
+
+        # 12. Offboarding stops everything
+        httpx.post(f"{GATEWAY}/api/vendors/Northbeam/offboard")
+        text, denied = ask(analyst, "largest customers")
+        check("offboarded vendor's agents are blocked", denied, text)
+        try:
+            create_root("Northbeam", "maya@northbeam.co", "northbeam-2", proxy=PROXY)
+            check("offboarded vendor cannot get new badges", False, "agent created")
+        except PartyError as e:
+            check("offboarded vendor cannot get new badges", "not an onboarded vendor" in str(e), str(e))
+
+        # 13. A compromised vendor tool splits its scraping across agents and trips the vendor-wide lock
         party = split_scrape_attack.run(PROXY, GATEWAY, pause=0)
-        check("split scraping locks the whole company", party["locked"], str(party))
+        check("split scraping locks the whole vendor", party["locked"], str(party))
         check("split scraping is detected", "split scraping" in (party["lock_reason"] or ""), str(party))
-        text, denied = McpAgent("rival-worker-1", PROXY).tool("ask_question", question="revenue")
-        check("locked company's agents are blocked", denied and "locked" in text, text)
+        text, denied = ask(McpAgent("ledgerly-worker-1", PROXY), "revenue")
+        check("locked vendor's agents are blocked", denied and "locked" in text, text)
 
         state = httpx.get(f"{GATEWAY}/api/state").json()
-        check("dashboard state lists agents and events", len(state["agents"]) >= 8 and len(state["events"]) > 10,
+        check("dashboard state lists agents and events", len(state["agents"]) >= 10 and len(state["events"]) > 15,
               f"{len(state['agents'])} agents, {len(state['events'])} events")
     finally:
         for p in procs:

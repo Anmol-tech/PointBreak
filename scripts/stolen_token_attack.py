@@ -21,7 +21,7 @@ def attempt(token: str, proof: str | None, gateway: str) -> tuple[str, bool]:
     return result["content"][0]["text"], bool(result.get("isError"))
 
 
-def run(agent: str = "finance-agent", proxy: str = PROXY_URL, gateway: str = GATEWAY_URL) -> list[tuple[str, bool]]:
+def run(agent: str = "contracts-reviewer", proxy: str = PROXY_URL, gateway: str = GATEWAY_URL) -> list[tuple[str, bool]]:
     r = httpx.get(f"{proxy}/agents/{agent}/stolen-token", timeout=10)
     r.raise_for_status()
     token = r.json()["access_token"]
@@ -35,4 +35,4 @@ def run(agent: str = "finance-agent", proxy: str = PROXY_URL, gateway: str = GAT
 
 
 if __name__ == "__main__":
-    run(sys.argv[1] if len(sys.argv) > 1 else "finance-agent")
+    run(sys.argv[1] if len(sys.argv) > 1 else "contracts-reviewer")
