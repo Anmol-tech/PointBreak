@@ -1,4 +1,4 @@
-# VendorVault — answers, not files (team PointBreak)
+# VendorVault (team PointBreak)
 
 SCU ACM **AWS x A10 Hack** · A10 track · **Prompt 1: Agentic Identity**
 
@@ -43,7 +43,7 @@ Agents never hold a key or token: the party runtime on :9001 holds keys and sign
 
 ## 2-minute demo
 1. **Team:** `python -m party.runner`. Alice's orchestrator gets a key-bound token from an ID-JAG and spawns legal + finance sub-agents; the dashboard tree shows the delegation chain.
-2. **Answers, not files:** the legal agent gets cited, masked excerpts; `get_document` is blocked with "documents never leave the vault"; Board Minutes is blocked.
+2. **No document downloads:** the legal agent gets cited, masked excerpts; `get_document` is blocked with "documents never leave the vault"; Board Minutes is blocked.
 3. **Stolen token:** `python -m scripts.stolen_token_attack` → rejected without the agent's key, and rejected with the attacker's own key.
 4. **Split scraping:** `python -m scripts.split_scrape_attack` → RivalBid's 5 sub-agents each take a slice; company coverage hits 70% → auto-lock, flagged as split scraping.
 5. **Leak trace:** `python -m scripts.leak_demo`, or paste text into the dashboard's Leak tracer → "legal-agent ← buyer-orchestrator ← alice@buyerco.com ← BuyerCo".
@@ -59,7 +59,7 @@ Use **Reset demo** on the dashboard (and `curl -X POST localhost:9001/reset`) be
 
 ## Judge Q&A
 - **"Datasite already has MCP."** They pass documents to the agent under a user's permissions. We never release files, bind tokens to the agent's key, attribute every answer to an agent chain, and limit coverage per company.
-- **"Read-only files can still be copied."** Exactly why we return answers, not files. In production, documents would decrypt only inside a verified AWS Nitro Enclave (KMS attestation-based key release), so the agent physically can't send them anywhere.
+- **"Read-only files can still be copied."** That's why agents only get short answers and never the full documents. In production, documents would decrypt only inside a verified AWS Nitro Enclave (KMS attestation-based key release), so the agent physically can't send them anywhere.
 - **"What if the agent paraphrases to dodge the fingerprint?"** The fingerprint covers verbatim leaks and deters; text matching covers stripped marks; coverage limits cap how much can be rebuilt at all.
 - **"Why ID-JAG?"** Both companies stay in control: the buyer's admin can stop issuing at their IdP, and the seller can revoke at the gateway. It's still a draft, so we implement the draft flow.
 

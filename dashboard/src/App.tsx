@@ -22,7 +22,7 @@ export default function App() {
           <div>
             <h1 className="text-sm font-semibold text-white">VendorVault</h1>
             <p className="text-[11px] text-slate-400">
-              Deal <span className="font-mono text-slate-300">{state?.deal ?? '…'}</span> · answers, not files
+              Deal data room · <span className="font-mono text-slate-300">{state?.deal ?? '…'}</span>
             </p>
           </div>
         </div>
