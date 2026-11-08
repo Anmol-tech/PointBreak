@@ -10,6 +10,8 @@ Writes cognito.json (pool and client IDs, not secret) and .demo-users (generated
 passwords; git ignores both).
 
 Run it in your own terminal with AWS credentials that can manage Cognito (not the Bedrock key).
+Passwords already in .demo-users are kept, so share that one file with your team instead of
+re-running the script on each machine; pass --reset-passwords to make new ones.
 It reads AWS_REGION and any AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN /
 AWS_PROFILE from .env; values already set in your shell win.
   .venv/bin/pip install boto3
@@ -19,6 +21,7 @@ AWS_PROFILE from .env; values already set in your shell win.
 import json
 import os
 import secrets
+import sys
 
 import boto3
 from botocore.exceptions import ClientError
@@ -54,6 +57,10 @@ cfg = load()
 cip = boto3.client("cognito-idp", region_name=REGION)
 account = boto3.client("sts", region_name=REGION).get_caller_identity()["Account"]
 passwords: dict[str, str] = {}
+# Keep the passwords this team already shares in .demo-users, so re-running the script (on any machine
+# with the same .demo-users) doesn't lock everyone else out. --reset-passwords makes new ones.
+RESET = "--reset-passwords" in sys.argv
+KNOWN: dict[str, str] = {} if RESET or not (ROOT / ".demo-users").exists() else json.loads((ROOT / ".demo-users").read_text())
 
 
 def password() -> str:
@@ -116,7 +123,7 @@ def ensure_user(pool_id: str, email: str, name: str, group: str | None = None):
                                               {"Name": "name", "Value": name}])
     except cip.exceptions.UsernameExistsException:
         pass
-    pw = password()
+    pw = KNOWN.get(email) or password()
     cip.admin_set_user_password(UserPoolId=pool_id, Username=email, Password=pw, Permanent=True)
     passwords[email] = pw
     if group:

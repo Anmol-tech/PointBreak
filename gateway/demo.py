@@ -14,6 +14,8 @@ SCENARIOS = {
     "leak": "Leak trace",
 }
 
+ACTIVE_AGENTS = lambda: set()  # replaced by the gateway with its live view of active agents
+
 NEW_VENDOR = {
     "name": "Northbeam",
     "purpose": "Customer market analysis",
@@ -57,14 +59,29 @@ def _onboard():
     return f"Northbeam onboarded with invite {code}: its agent asked about Customers and was blocked from Contracts"
 
 
+def pick_agent() -> str:
+    """An active agent to use as the target: a helper if there is one (the AI team names its own)."""
+    from common.config import load
+    cfg = load()
+    vendor_side = {a["name"]: a for a in httpx.get(f"{cfg['party_sim_url']}/agents", timeout=5).json()}
+    active = ACTIVE_AGENTS()  # names the gateway still lets in (set by gateway/app.py)
+    names = [n for n in vendor_side if n in active]
+    for want_helper in (True, False):
+        for name in reversed(names):
+            if bool(vendor_side[name]["parent"]) == want_helper:
+                return name
+    raise RuntimeError("unknown agent: no agents yet")
+
+
 def _stolen():
     from scripts.stolen_token_attack import run
+    target = pick_agent()
     try:
-        results = run("contracts-reviewer")
+        results = run(target)
     except httpx.HTTPStatusError:
-        raise RuntimeError("unknown agent contracts-reviewer")
+        raise RuntimeError(f"unknown agent {target}")
     blocked = sum(1 for _, denied in results if denied)
-    return f"Attacker replayed stolen credentials {len(results)} ways; {blocked} of {len(results)} blocked"
+    return f"Attacker replayed {target}'s stolen credentials {len(results)} ways; {blocked} of {len(results)} blocked"
 
 
 def _scrape():
@@ -75,7 +92,7 @@ def _scrape():
 
 def _leak():
     from scripts.leak_demo import run
-    with_marks, _ = run("contracts-reviewer")
+    with_marks, _ = run(pick_agent())
     if not with_marks["matches"]:
         return "No matching agent found"
     return "Leak traced to " + " ← ".join(reversed(with_marks["matches"][0]["chain"]))

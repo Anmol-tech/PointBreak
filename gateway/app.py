@@ -18,6 +18,7 @@ from common.cognito import CognitoError, load_config
 from common.config import ROOT, issuer_for, load
 from gateway.auth import COOKIE, SESSION_SECONDS, FalconSSO
 from gateway.bedrock import BedrockError, BedrockWriter
+import gateway.demo as demo_module
 from gateway.demo import SCENARIOS, DemoRunner
 from gateway.identity import AuthError, Identity
 from gateway.protect import Masker, embed, extract, match_answers, roster_names
@@ -34,6 +35,8 @@ masker = Masker(roster_names(vault))
 identity = Identity(cfg, store)
 writer = BedrockWriter(cfg)
 demo = DemoRunner()
+demo_module.ACTIVE_AGENTS = lambda: {a["name"] for a in store.agents.values() if a["status"] == "active"
+                                     and not store.parties.get(a["party"], {}).get("locked")}
 
 sso = FalconSSO(load_config())
 

@@ -23,6 +23,7 @@ function SignInScreen({ pool }: { pool?: string }) {
       <span className="brand-mark"><Icon name="shield" /></span>
       <span className="eyebrow">FALCON ANALYTICS · VENDOR AGENT CONTROL CENTER</span>
       <h1>Sign in to continue.</h1>
+      {new URLSearchParams(window.location.search).get('login_error') && <p className="company-warning" role="alert"><Icon name="alert" />Sign-in didn't finish. Try again.</p>}
       <p>Falcon staff sign in with the company login. Only members of the <strong>falcon-admins</strong> group can stop agents or change vendor access.</p>
       <a className="button button-primary" href="/auth/login"><Icon name="key" />Sign in with Falcon SSO</a>
       <p className="small muted">Amazon Cognito · OpenID Connect with PKCE{pool ? <> · pool <code>{pool}</code></> : null}</p>

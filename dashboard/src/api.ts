@@ -79,8 +79,10 @@ export function useVaultState() {
 // The vendor portal talks to the vendor's own runtime (port 9001), not to Falcon's gateway.
 export const VENDOR_PORTAL_URL =
   (import.meta.env.VITE_PARTY_URL as string | undefined) ?? `${window.location.protocol}//${window.location.hostname}:9001`
-// Served from the vendor runtime itself, the portal calls its own origin.
-const PARTY_URL = window.location.port === '9001' ? '' : VENDOR_PORTAL_URL
+// The built vendor portal is served by the vendor runtime itself, so it calls its own origin
+// (whatever port that is). Falcon's app, and the portal on the Vite dev server, call the runtime on :9001.
+const IS_VENDOR_PAGE = document.querySelector('meta[name="vv-app"]')?.getAttribute('content') === 'vendor'
+const PARTY_URL = IS_VENDOR_PAGE && !import.meta.env.DEV ? '' : VENDOR_PORTAL_URL
 
 async function partyCall<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const res = await fetch(`${PARTY_URL}${path}`, {

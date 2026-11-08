@@ -111,7 +111,8 @@ class Team:
         clean = INVISIBLE.sub("", text)
         stopped = denied and any(w in clean.lower() for w in STOP_WORDS)
         if denied:
-            self.note(f"🛑 {agent.name} blocked: stopped by Falcon" if stopped else f"⛔ {agent.name} blocked: {tool}")
+            why = clean.replace("⛔ VendorVault denied: ", "").split(". ")[0]
+            self.note(f"🛑 {agent.name} blocked: stopped by Falcon" if stopped else f"⛔ {agent.name} blocked: {why[:60]}")
         else:
             q = args.get("question")
             self.note(f"✅ {agent.name} asked: {q[:48] + '…' if len(q) > 48 else q}" if q else f"✅ {agent.name}: {tool}")
