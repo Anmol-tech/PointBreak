@@ -639,3 +639,12 @@ summary { cursor: pointer; }
 .fp-team-agents li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .fp-team-name { display: flex; align-items: center; gap: 7px; background: none; border: 0; padding: 0; color: inherit; font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
 .fp-team-name small { opacity: .6; font-size: 10px; }
+
+/* Less text on the live stage */
+.fp-live h3 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fp-log li, .fp-team-notes li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fp-chain { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Compact page titles on the non-3D tabs */
+.page-title { margin: 0 0 18px; font-size: 28px; letter-spacing: -0.6px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

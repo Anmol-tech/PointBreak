@@ -31,7 +31,6 @@ export function OnboardVendor({ state, onOpenPortal }: { state: VaultState; onOp
       <section className="onboard-banner">
         <div>
           <h2>Bring in a new vendor</h2>
-          <p className="muted small">Describe the work you're hiring them for and choose only the folders that work needs. Their agents can never get more.</p>
         </div>
         <button type="button" className="button button-primary" onClick={() => setOpen(true)}><Icon name="agents" />Onboard a new vendor</button>
       </section>
@@ -46,11 +45,11 @@ export function OnboardVendor({ state, onOpenPortal }: { state: VaultState; onOp
         <div className="invite-code">{invite.invite_code}</div>
         <ol className="onboard-steps">
           <li><span>1</span>Send this code to {contact || `${invite.name}'s admin`}.</li>
-          <li><span>2</span>They open the vendor portal (their own platform), enter the code, and connect their company login.</li>
-          <li><span>3</span>{invite.name} turns Active below, and its agents can get badges limited to {folders.join(', ') || 'nothing'}.</li>
+          <li><span>2</span>They enter it in the vendor portal and connect their login.</li>
+          <li><span>3</span>Its agents can then get badges for {folders.join(', ') || 'nothing'}.</li>
         </ol>
         <div className="trace-actions">
-          <button type="button" className="button button-primary" onClick={() => onOpenPortal(invite.invite_code)}>Open the vendor portal (separate site) as {invite.name} <Icon name="arrow" /></button>
+          <button type="button" className="button button-primary" onClick={() => onOpenPortal(invite.invite_code)}>Open vendor portal as {invite.name} <Icon name="arrow" /></button>
           <button type="button" className="text-button" onClick={startOver}>Invite another vendor</button>
           <button type="button" className="text-button" onClick={() => { startOver(); setOpen(false) }}>Done</button>
         </div>
@@ -63,7 +62,7 @@ export function OnboardVendor({ state, onOpenPortal }: { state: VaultState; onOp
       <div className="section-heading">
         <div>
           <span className="eyebrow">ONBOARD A NEW VENDOR</span>
-          <h2>Who are they, and what work will their agents do?</h2>
+          <h2>New vendor</h2>
         </div>
         <button type="button" className="text-button" onClick={() => setOpen(false)}>Cancel</button>
       </div>
@@ -71,7 +70,7 @@ export function OnboardVendor({ state, onOpenPortal }: { state: VaultState; onOp
         <div>
           <label className="field-label" htmlFor="ov-name">Vendor company</label>
           <input id="ov-name" placeholder="e.g. Northbeam" value={name} onChange={(e) => setName(e.target.value)} />
-          <label className="field-label" htmlFor="ov-purpose">What will their agents do for us?</label>
+          <label className="field-label" htmlFor="ov-purpose">Work</label>
           <input id="ov-purpose" placeholder="e.g. Customer market analysis" value={purpose} onChange={(e) => setPurpose(e.target.value)} />
           <label className="field-label" htmlFor="ov-contact">Their admin's email</label>
           <input id="ov-contact" placeholder="admin@vendor.com" value={contact} onChange={(e) => setContact(e.target.value)} />
@@ -86,9 +85,8 @@ export function OnboardVendor({ state, onOpenPortal }: { state: VaultState; onOp
           ))}
           <label>
             <input type="checkbox" checked={canList} onChange={() => setCanList(!canList)} />
-            <Icon name="file" /><span>Let agents see folder and section names</span>
+            <Icon name="file" /><span>Allow list_folders</span>
           </label>
-          <p className="small muted">Agents can always ask questions. They can never download or export documents.</p>
         </fieldset>
       </div>
       {error && <p className="company-warning"><Icon name="alert" />{error}</p>}

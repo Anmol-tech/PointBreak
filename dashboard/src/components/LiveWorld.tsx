@@ -366,7 +366,7 @@ function Zone({ party, z, status, locked, focus }: { party: Party; z: number; st
       </mesh>
       <Html position={[width / 2 - 0.3, 0.02, ZONE_DEPTH / 2 - 0.25]} distanceFactor={14} zIndexRange={[4, 0]}>
         <span className={`j3d-zone is-right ${locked ? 'is-locked' : ''} ${status !== 'active' ? 'is-muted' : ''}`}>
-          {party.name} · {status === 'offboarded' ? 'offboarded' : locked ? 'locked out' : status === 'invited' ? 'invited, not trusted yet' : party.purpose || 'vendor'}
+          {party.name}{status === 'offboarded' ? ' · offboarded' : locked ? ' · locked' : status === 'invited' ? ' · invited' : ''}
         </span>
       </Html>
     </group>
@@ -571,7 +571,7 @@ export default function LiveWorld({ state, speed, replayToken, selected, onSelec
               <Animated pos={v.login} focus={focus.has(`login:${p.name}`)} tint={display.locked.has(p.name) ? C.bad : C.accent} dim={dim} scale={1.05} spin={0.5} selected={selected?.kind === 'vendor' && selected.id === p.name} onClick={() => onSelect({ kind: 'vendor', id: p.name })}>
                 {(m) => <LoginModel m={m} />}
               </Animated>
-              <Label pos={v.login} title={`${p.name} login`} sub="Company identity provider" tone={dim ? 'dim' : focus.has(`login:${p.name}`) ? 'focus' : undefined} />
+              <Label pos={v.login} title={`${p.name} login`} tone={dim ? 'dim' : focus.has(`login:${p.name}`) ? 'focus' : undefined} />
             </group>
           )
         })}
@@ -599,21 +599,21 @@ export default function LiveWorld({ state, speed, replayToken, selected, onSelec
             <Animated pos={layout.attacker(plan!.event.party)} focus tint={C.bad} scale={0.8}>
               {(m) => <AgentModel m={m} />}
             </Animated>
-            <Label pos={layout.attacker(plan!.event.party)} title="Unknown machine" sub="holding a copied badge" tone="bad" small />
+            <Label pos={layout.attacker(plan!.event.party)} title="Attacker" tone="bad" small />
           </group>
         )}
 
         <Animated pos={SHIELD} focus={focus.has('shield')} tint={shieldTone === 'bad' ? C.bad : shieldTone === 'warn' ? C.warn : C.accent} scale={1.3} spin={0.45}>
           {(m) => <ShieldModel m={m} />}
         </Animated>
-        <Label pos={SHIELD} title="VendorVault" sub="Identity + access checks" tone={shieldTone === 'bad' ? 'bad' : focus.has('shield') ? 'focus' : undefined} />
+        <Label pos={SHIELD} title="VendorVault" tone={shieldTone === 'bad' ? 'bad' : focus.has('shield') ? 'focus' : undefined} />
         <CheckRing states={checks} />
         <Sparkles count={36} scale={[3.4, 2.4, 3.4]} position={[SHIELD[0], 1.6, 0]} size={2.2} speed={0.35} color={shieldTone === 'bad' ? C.bad : C.accent} />
 
         <Animated pos={SAFE} focus={focus.has('safe')} tint={C.accent} scale={1.25} spin={0.3}>
           {(m) => <VaultModel m={m} />}
         </Animated>
-        <Label pos={SAFE} title="Vault agent" sub={state.answer_engine} tone={focus.has('safe') ? 'focus' : undefined} />
+        <Label pos={SAFE} title="Vault agent" tone={focus.has('safe') ? 'focus' : undefined} />
         <group position={[SAFE[0] - 0.4, 3.2, 0]}>
           {state.folders.map((f, i) => {
             const perRow = Math.ceil(state.folders.length / 2)
@@ -641,7 +641,7 @@ export default function LiveWorld({ state, speed, replayToken, selected, onSelec
           <Bloom intensity={0.7} luminanceThreshold={0.6} luminanceSmoothing={0.3} mipmapBlur />
         </EffectComposer>
       </Canvas>
-      <span className="j3d-hint">Click an agent or vendor · drag to look around · scroll to zoom</span>
+      <span className="j3d-hint">Click to inspect · drag to rotate</span>
     </div>
   )
 }

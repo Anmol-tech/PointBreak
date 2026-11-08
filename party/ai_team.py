@@ -88,8 +88,7 @@ class Team:
     # --- identity -----------------------------------------------------------------------
     def start_lead(self) -> McpAgent:
         info = create_root(self.party, self.user, self.lead, proxy=self.proxy)
-        self.note(f"🔑 {self.user} signed in with {self.party}'s company login; {self.lead} got a key-bound badge "
-                  f"for {', '.join(info['granted_folders'])}")
+        self.note(f"🔑 {self.user.split('@')[0]} signed in · {self.lead} got its badge")
         agent = McpAgent(self.lead, self.proxy)
         agent.initialize()
         return agent
@@ -98,10 +97,9 @@ class Team:
         try:
             info = spawn(self.lead, name, folders=folders or None, proxy=self.proxy)
         except PartyError as e:
-            self.note(f"⛔ {self.lead} asked for helper {name} with {', '.join(folders) or 'all folders'}: refused ({e})")
+            self.note(f"⛔ {name} refused: more access than {self.lead}" if "more access" in str(e) else f"⛔ {name} refused")
             return None, f"Could not create helper {name}: {e}"
-        self.note(f"🔑 {name} got its own key and a narrower badge: {', '.join(info['granted_folders'])} "
-                  f"(chain {name} ← {self.lead} ← {self.user} ← {self.party})")
+        self.note(f"🔑 {name}: own key · {', '.join(info['granted_folders'])} only")
         agent = McpAgent(name, self.proxy)
         agent.initialize()
         return agent, ""
@@ -112,11 +110,11 @@ class Team:
         text, denied = agent.tool(tool, **args)
         clean = INVISIBLE.sub("", text)
         stopped = denied and any(w in clean.lower() for w in STOP_WORDS)
-        label = args.get("question") or args.get("path") or tool
         if denied:
-            self.note(f"{'🛑' if stopped else '⛔'} {agent.name}: {tool} “{label}” → {clean.replace('⛔ VendorVault denied: ', 'denied: ')}")
+            self.note(f"🛑 {agent.name} blocked: stopped by Falcon" if stopped else f"⛔ {agent.name} blocked: {tool}")
         else:
-            self.note(f"✅ {agent.name}: {tool} “{label}” answered")
+            q = args.get("question")
+            self.note(f"✅ {agent.name} asked: {q[:48] + '…' if len(q) > 48 else q}" if q else f"✅ {agent.name}: {tool}")
             self.after_call(agent.name, count)
         return text, denied, stopped
 
@@ -170,7 +168,7 @@ def run_helper_llm(team: Team, agent: McpAgent, assignment: str) -> str:
 def run_lead_llm(team: Team, lead: McpAgent, task: str) -> str:
     outline, _ = lead.tool("list_folders")
     folders = sorted({m.group(1) for m in re.finditer(r"^- ([^/]+?) /", INVISIBLE.sub("", outline), re.M)})
-    team.note(f"🧠 {team.lead} ({LABEL}) is planning with the folders it may use: {', '.join(folders)}")
+    team.note(f"🧠 {team.lead} is planning ({LABEL})")
     system = LEAD_PROMPT.format(lead=team.lead, party=team.party, user=team.user, folders=", ".join(folders))
     delegate = {"name": "delegate", "description": "Create a helper agent with its own identity and run it on one part of the task.",
                 "inputSchema": {"json": {"type": "object", "properties": {
@@ -182,9 +180,6 @@ def run_lead_llm(team: Team, lead: McpAgent, task: str) -> str:
         out = converse(system, messages, [delegate])
         messages.append(out["message"])
         uses = [b["toolUse"] for b in out["message"]["content"] if "toolUse" in b]
-        thought = text_of(out["message"])
-        if thought and uses:
-            team.note(f"🧠 {team.lead}: {thought[:220]}")
         if out["stop"] != "tool_use" or not uses:
             return text_of(out["message"])
 
@@ -195,7 +190,7 @@ def run_lead_llm(team: Team, lead: McpAgent, task: str) -> str:
             if not agent:
                 return use["toolUseId"], error, True
             findings = run_helper_llm(team, agent, args.get("assignment", ""))
-            team.note(f"📝 {name} reported back{' (stopped)' if findings.startswith('STOPPED') else ''}")
+            team.note(f"📝 {name} {'was cut off' if findings.startswith('STOPPED') else 'reported back'}")
             return use["toolUseId"], f"{name} reports: {findings}", findings.startswith("STOPPED")
 
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -219,7 +214,7 @@ SCRIPTED = [
 
 
 def run_scripted(team: Team, task: str) -> str:
-    team.note(f"🧠 {team.lead} (fixed plan, no LLM) splits the task between two helpers")
+    team.note(f"🧠 {team.lead} is planning (fixed plan)")
     team.start_helper("finance-reviewer", ["Financials"])  # shows the child ⊆ parent rule: always refused
 
     def work(plan):
@@ -250,7 +245,7 @@ def run_ai_team(task: str = DEFAULT_TASK, party: str = "LexPartners", user: str 
         memo, engine = run_lead_llm(team, lead_agent, task), f"{LABEL} on Amazon Bedrock"
     else:
         memo, engine = run_scripted(team, task), "fixed plan"
-    team.note(f"📄 {team.lead} finished the memo")
+    team.note(f"📄 {team.lead} wrote the memo")
     return {"memo": memo, "engine": engine}
 
 

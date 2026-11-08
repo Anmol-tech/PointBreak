@@ -56,7 +56,7 @@ function AgentCard({ agent, state, pending, onAction, onSelect }: {
         <div><dt>Created by</dt><dd>{agent.parent ? <button type="button" className="text-button" onClick={() => onSelect({ kind: 'agent', id: agent.parent! })}>{agent.parent.split(':')[1]}</button> : `${agent.user} (main agent)`}</dd></div>
         <div><dt>May ask about</dt><dd>{agent.folders.join(', ') || 'nothing'}</dd></div>
         <div><dt>MCP tools</dt><dd>{agent.scope.filter((s) => party?.scope.includes(s)).map((s) => MCP_TOOLS.find((t) => t[1] === s)?.[0] ?? s).join(', ') || 'none'}</dd></div>
-        <div><dt>Workload key</dt><dd title={`cnf.jkt ${agent.jkt}`}><code>{agent.jkt.slice(0, 12)}…</code> <small className="muted">badge only works with this key</small></dd></div>
+        <div><dt>Workload key</dt><dd title={`cnf.jkt ${agent.jkt}`}><code>{agent.jkt.slice(0, 12)}…</code></dd></div>
         <div><dt>Activity</dt><dd>{agent.calls} requests · {agent.sections_seen} sections seen</dd></div>
         {helpers.length > 0 && <div><dt>Helpers</dt><dd>{helpers.map((h) => <button key={h.id} type="button" className="text-button" onClick={() => onSelect({ kind: 'agent', id: h.id })}>{h.name}</button>)}</dd></div>}
       </dl>
@@ -106,13 +106,13 @@ function VendorCard({ party, state, pending, onAction, onSelect }: {
         <div><dt>May ask about</dt><dd>{party.folders.join(', ') || 'nothing'}</dd></div>
       </dl>
       <div className="fp-coverage">
-        <span>Seen by all its agents together</span><strong>{pct}%</strong>
+        <span>Seen by its agents</span><strong>{pct}%</strong>
         <div className={`coverage-track ${party.coverage >= state.thresholds.lock ? 'coverage-locked' : party.coverage >= state.thresholds.alert ? 'coverage-alert' : ''}`}><span style={{ width: `${Math.min(pct, 100)}%` }} /></div>
       </div>
       {party.lock_reason && <p className="fp-warning"><Icon name="alert" />{party.lock_reason}</p>}
       {party.status === 'active' && (
         <fieldset className="fp-tool-toggles">
-          <legend className="eyebrow fp-sub">MCP TOOLS ITS AGENTS MAY CALL</legend>
+          <legend className="eyebrow fp-sub">MCP TOOLS</legend>
           {MCP_TOOLS.map(([tool, scope]) => {
             const on = party.scope.includes(scope)
             return <label key={tool}><input type="checkbox" checked={on} disabled={pending} onChange={() => {
@@ -120,7 +120,7 @@ function VendorCard({ party, state, pending, onAction, onSelect }: {
               void onAction('Update MCP tools', () => api.setTools(party.name, next))
             }} /><code>{tool}</code></label>
           })}
-          <small className="muted">Takes effect on the next call. get_document and export_all can never be turned on.</small>
+          <small className="muted">Applies on the next call.</small>
         </fieldset>
       )}
       <span className="eyebrow fp-sub">AGENTS · {agents.length}</span>
@@ -161,12 +161,10 @@ export function WorldStage({ state, pending, onRun, onReset, onAction, onFlat }:
   const [selected, setSelected] = useState<Selection>(null)
   const [log, setLog] = useState<LogEntry[]>([])
   const [current, setCurrent] = useState<VaultEvent | null>(null)
-  const [say, setSay] = useState('Waiting for the next action…')
   const [checks, setChecks] = useState<CheckState[] | null>(null)
-  const onLog = useCallback((entries: LogEntry[], event: VaultEvent | null, line: string, live: CheckState[] | null) => {
+  const onLog = useCallback((entries: LogEntry[], event: VaultEvent | null, _line: string, live: CheckState[] | null) => {
     setLog(entries)
     setCurrent(event)
-    setSay(line)
     setChecks((prev) => (live ? live : event?.kind === 'call' ? prev : null))
   }, [])
 
@@ -209,8 +207,7 @@ export function WorldStage({ state, pending, onRun, onReset, onAction, onFlat }:
 
       {(teamRunning || memo) && notes.length > 0 && (
         <div className="float-panel fp-team">
-          <span className="eyebrow">{teamRunning ? <><span className="fp-pulse" />AGENT TEAM AT WORK</> : 'AGENT TEAM · DONE'}</span>
-          {teamRunning && <p className="fp-tip">Stop a helper while it works: its next call is refused and the other helper keeps going. Stopping the lead stops its whole team.</p>}
+          <span className="eyebrow">{teamRunning ? <><span className="fp-pulse" />AGENT TEAM</> : 'AGENT TEAM · DONE'}</span>
           {team.length > 0 && (
             <ul className="fp-team-agents">
               {team.map((a) => (
@@ -226,13 +223,13 @@ export function WorldStage({ state, pending, onRun, onReset, onAction, onFlat }:
             </ul>
           )}
           {memo && (
-            <details className="fp-memo" open>
-              <summary>{memo.ok ? 'Memo from the lead agent' : 'The team stopped'}</summary>
+            <details className="fp-memo">
+              <summary>{memo.ok ? 'Read the memo' : 'The team stopped'}</summary>
               <p>{memo.message}</p>
             </details>
           )}
           <ol className="fp-team-notes">
-            {[...notes].reverse().slice(0, memo ? 4 : 8).map((n) => <li key={n.ts + n.text}>{n.text}</li>)}
+            {[...notes].reverse().slice(0, memo ? 3 : 5).map((n) => <li key={n.ts + n.text}>{n.text}</li>)}
           </ol>
         </div>
       )}
@@ -244,7 +241,7 @@ export function WorldStage({ state, pending, onRun, onReset, onAction, onFlat }:
             <li key={p.name}>
               <button type="button" className={selected?.kind === 'vendor' && selected.id === p.name ? 'is-selected' : ''} onClick={() => setSelected({ kind: 'vendor', id: p.name })}>
                 <span className={`fp-dot ${vendorTone(p)}`} />
-                <span className="fp-vendor-name">{p.name}<small>{p.status === 'invited' ? 'invited' : p.purpose}</small></span>
+                <span className="fp-vendor-name">{p.name}{p.status !== 'active' || p.locked ? <small>{p.status === 'invited' ? 'invited' : p.status === 'offboarded' ? 'offboarded' : 'locked'}</small> : null}</span>
                 <span className="fp-mini-bar"><span style={{ width: `${Math.min(100, Math.round(p.coverage * 100))}%` }} className={vendorTone(p)} /></span>
               </button>
             </li>
@@ -253,14 +250,12 @@ export function WorldStage({ state, pending, onRun, onReset, onAction, onFlat }:
       </div>
       </div>
 
-      <div className="stage-center">
-        <p className={`fp-narration ${currentTone}`} aria-live="polite" key={say}>{say}</p>
-      </div>
+      <div className="stage-center" />
 
       <div className="stage-col stage-right">
       <div className={`float-panel fp-live ${currentTone}`}>
         <span className="eyebrow"><span className="fp-pulse" />LIVE NOW</span>
-        <h3>{current ? describe(current).headline : 'Waiting for the next action'}</h3>
+        <h3 aria-live="polite">{current ? describe(current).headline : 'Waiting…'}</h3>
         {current?.chain?.length ? <p className="fp-chain">{[...current.chain].reverse().join(' ← ')}</p> : null}
         <ol className="fp-checks">
           {CHECK_LABELS.map((label, i) => {
@@ -276,12 +271,11 @@ export function WorldStage({ state, pending, onRun, onReset, onAction, onFlat }:
             : (
               <>
                 <span className="eyebrow">ACTION LOG</span>
-                {log.length === 0 ? <p className="muted small">Run a scenario, or start an agent in the vendor portal. Every real action plays in the world.</p> : (
+                {log.length === 0 ? <p className="muted small">Run a scenario to start.</p> : (
                   <ol className="fp-log">
-                    {log.map((entry, i) => <li key={entry.id} className={i === 0 ? 'is-current' : ''}><span className={`history-dot decision-${entry.decision}`} />{entry.text}</li>)}
+                    {log.slice(0, 5).map((entry, i) => <li key={entry.id} className={i === 0 ? 'is-current' : ''}><span className={`history-dot decision-${entry.decision}`} />{entry.text}</li>)}
                   </ol>
                 )}
-                <p className="fp-tip">Tip: click any robot or padlock to inspect it.</p>
               </>
             )}
       </div>

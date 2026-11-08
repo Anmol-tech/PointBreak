@@ -71,12 +71,9 @@ function ControlCenter({ user }: { user: FalconUser | null }) {
               onAction={act}
             />
           ) : <>
-          <section className="page-heading">
-            <div><div className="eyebrow">{view === 'board' ? 'VENDOR AGENTS, UNDER CONTROL' : view === 'access' ? 'ACCESS, MATCHED TO THE WORK' : 'EVERY ANSWER HAS AN ORIGIN'}</div><h1>{view === 'board' ? <>Who asked.<br />What left. <em>What didn’t.</em></> : view === 'access' ? <>Their agents.<br /><em>Your boundaries.</em></> : <>An answer leaked.<br /><em>Find its trail.</em></>}</h1></div>
-            <p className="heading-note"><span />{view === 'board' ? <>Vendor agents get answers.<br />Your documents stay here.</> : view === 'access' ? <>Onboard vendors and set their scope.<br />Stop one agent or a whole vendor.</> : <>Paste text found outside the company.<br />See which agent received it.</>}</p>
-          </section>
+          <h1 className="page-title">{view === 'board' ? 'Activity' : view === 'access' ? 'Vendors' : 'Trace a leak'}</h1>
           <div className="demo-toolbar"><DemoControls demo={state.demo} pending={pending !== null} onRun={(name) => { setView(name === 'onboard' ? 'access' : name === 'scrape' ? 'board' : 'flow'); setBoardSession((session) => session + 1); void act('Run demo', () => api.runDemo(name)) }} /><button className="text-button reset-button" type="button" disabled={pending !== null || state.demo.running !== null} onClick={() => { setBoardSession((session) => session + 1); void act('Reset demo', api.reset) }}><Icon name="reset" />Reset demo</button></div>
-          {state.demo.running ? <div className="demo-notice" role="status"><span className="spinner" /><span><strong>{state.demo.scenarios[state.demo.running]}</strong> is running. The screen updates as each step happens.</span></div> : state.demo.last && <div className={`demo-notice ${state.demo.last.ok ? '' : 'has-error'}`} role="status"><Icon name={state.demo.last.ok ? 'check' : 'alert'} /><span>{state.demo.last.message}</span></div>}
+          {state.demo.running ? <div className="demo-notice" role="status"><span className="spinner" /><span><strong>{state.demo.scenarios[state.demo.running]}</strong> is running. The screen updates as each step happens.</span></div> : state.demo.last && <div className={`demo-notice ${state.demo.last.ok ? '' : 'has-error'}`} role="status"><Icon name={state.demo.last.ok ? 'check' : 'alert'} /><span>{state.demo.last.name === 'ai-team' && state.demo.last.ok ? 'AI agent team finished. Read the memo in Live flow.' : state.demo.last.message}</span></div>}
           {view === 'board' && <ActivityBoard key={boardSession} state={state} pending={pending !== null} onAction={act} onManage={() => setView('access')} />}
           {view === 'access' && <><OnboardVendor state={state} onOpenPortal={openPortal} /><AccessWorkspace state={state} pending={pending !== null} onAction={act} /></>}
           {view === 'trace' && <LeakWorkspace />}

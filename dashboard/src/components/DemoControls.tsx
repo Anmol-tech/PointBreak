@@ -2,7 +2,7 @@ import type { DemoStatus } from '../types'
 import { Icon } from './Icon'
 
 const ORDER = [
-  ['team', 'Vendor agent team'],
+  ['ai-team', 'AI agent team'],
   ['onboard', 'Onboard a new vendor'],
   ['stolen', 'Stolen badge'],
   ['scrape', 'Compromised vendor tool'],
@@ -23,11 +23,11 @@ export function DemoControls({ demo, pending, onRun }: { demo: DemoStatus; pendi
               disabled={busy}
               aria-label={`Run ${label} demo`}
               onClick={() => onRun(name)}
-              className={`scenario-button ${name === 'team' ? 'scenario-primary' : ''}`}
+              className={`scenario-button ${name === 'ai-team' ? 'scenario-primary' : ''}`}
             >
               {running ? (
                 <span className="spinner" />
-              ) : name === 'team' ? <Icon name="play" /> : <span className="scenario-number">{i + 1}</span>}
+              ) : name === 'ai-team' ? <Icon name="play" /> : <span className="scenario-number">{i + 1}</span>}
               {label}
             </button>
           )
