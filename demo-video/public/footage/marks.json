@@ -1,0 +1,36 @@
+{
+  "team": {
+    "ready": 4.03,
+    "started": 4.072,
+    "helpers": 7.592,
+    "stopped": 13.136,
+    "helper": "contracts-reviewer",
+    "blocked": 13.646,
+    "done": 28.694,
+    "memo": 30.249,
+    "end": 36.25
+  },
+  "tools": {
+    "card": 3.103,
+    "off": 5.637,
+    "on": 8.668,
+    "end": 10.669
+  },
+  "stolen": {
+    "started": 3.074,
+    "done": 3.58,
+    "end": 10.58
+  },
+  "trace": {
+    "tab": 1.594,
+    "pasted": 1.607,
+    "found": 3.154,
+    "end": 7.155
+  },
+  "portal": {
+    "ready": 2.524,
+    "answer": 2.586,
+    "blocked": 6.208,
+    "end": 9.709
+  }
+}

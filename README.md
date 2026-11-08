@@ -107,6 +107,8 @@ Sign in at http://localhost:8000 as `admin@falcon.example` (Cognito). Stay on **
 
 **Reset** between runs (it resets both Falcon's gateway and the vendor side).
 
+**Demo video:** a 92-second recorded walkthrough with voiceover, built with Remotion in [`demo-video/`](demo-video/README.md).
+
 ## Tests
 ```bash
 .venv/bin/python -m tests.e2e_test

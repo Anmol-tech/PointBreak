@@ -1,0 +1,16 @@
+{
+  "title": "This is VendorVault, from team PointBreak. Identity, tool permissions, and a stop button, for every AI agent your vendors bring.",
+  "problem": "Vendors now point their own AI agents at your data. With one shared API key, you can't tell which agent is asking, limit what it can do, or stop one agent in the middle of a task.",
+  "signin": "Falcon's admins sign in with their company login.",
+  "cognito": "It is real Amazon Cognito, using OpenID Connect with P K C E.",
+  "lead": "Now a vendor's lead agent, Claude on Amazon Bedrock, gets a badge that only works with its own key.",
+  "helpers": "It splits the work between two helper agents. Each one gets its own key, and never more access than its parent.",
+  "stop": "While contracts reviewer is still working, Falcon presses stop.",
+  "blocked": "Its very next request is refused. The other helper keeps going.",
+  "memo": "And the lead agent's memo says plainly which part is missing.",
+  "tools": "Falcon also picks exactly which MCP tools each vendor's agents may call. Changes apply on the next request.",
+  "stolen": "Stolen credentials don't help an attacker. A copied badge, without the agent's key, is blocked. Three attacks out of three.",
+  "trace": "If an answer leaks, VendorVault traces it back to the exact agent, and the person behind it.",
+  "portal": "On the vendor's side, agents get short, masked answers. The files never leave.",
+  "outro": "VendorVault. Know which agent is asking, and stop it, anytime."
+}
