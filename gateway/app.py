@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import secrets
 from urllib.parse import parse_qs
 
@@ -15,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from common.cognito import CognitoError, load_config
 from common.config import ROOT, issuer_for, load
-from gateway.auth import COOKIE, FalconSSO
+from gateway.auth import COOKIE, SESSION_SECONDS, FalconSSO
 from gateway.bedrock import BedrockError, BedrockWriter
 from gateway.demo import SCENARIOS, DemoRunner
 from gateway.identity import AuthError, Identity
@@ -40,6 +41,7 @@ app = FastAPI(title="VendorVault gateway")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # Called by vendor runtimes, not by Falcon staff: protected by the invite code / limited to one vendor's terms.
+TERMS_PATH = re.compile(r"/api/vendors/[^/]+/terms")
 VENDOR_FACING = ("/api/vendors/invite/", "/api/vendors/connect")
 
 
@@ -47,7 +49,7 @@ VENDOR_FACING = ("/api/vendors/invite/", "/api/vendors/connect")
 async def require_falcon_sign_in(request: Request, call_next):
     """With Cognito on, Falcon's owner API needs a signed-in workforce user; changes need falcon-admins."""
     path = request.url.path
-    if sso.enabled and path.startswith("/api/") and not path.startswith(VENDOR_FACING) and not path.endswith("/terms"):
+    if sso.enabled and path.startswith("/api/") and not path.startswith(VENDOR_FACING) and not TERMS_PATH.fullmatch(path):
         user = sso.user(request.cookies.get(COOKIE))
         if not user:
             return JSONResponse({"error": "Sign in with Falcon SSO first", "login": "/auth/login"}, status_code=401)
@@ -643,7 +645,7 @@ async def auth_callback(code: str = "", state: str = "", error: str = ""):
     store.log(kind="share", decision="info", party=None, agent=None, chain=[],
               reason=f"{user['email']} signed in to the control center with Falcon SSO (Amazon Cognito)")
     resp = RedirectResponse("/")
-    resp.set_cookie(COOKIE, sid, httponly=True, samesite="lax", max_age=3600)
+    resp.set_cookie(COOKIE, sid, httponly=True, samesite="lax", max_age=SESSION_SECONDS)
     return resp
 
 

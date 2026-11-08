@@ -241,7 +241,11 @@ def main():
     finally:
         for p in procs:
             p.terminate()
-            p.wait()
+        for p in procs:  # uvicorn can wait on an open keep-alive connection; don't hang the test run
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                p.kill()
     print(f"\n{'ALL PASSED' if not FAILED else f'{len(FAILED)} FAILED: ' + ', '.join(FAILED)}")
     sys.exit(1 if FAILED else 0)
 

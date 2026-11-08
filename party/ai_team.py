@@ -241,9 +241,13 @@ def run_ai_team(task: str = DEFAULT_TASK, party: str = "LexPartners", user: str 
     """Run the team. Returns {"memo", "engine", "helpers"}."""
     team = Team(party, user, lead, proxy, note, after_call, pace)
     lead_agent = team.start_lead()
+    memo = None
     if llm_enabled():
-        memo, engine = run_lead_llm(team, lead_agent, task), f"{LABEL} on Amazon Bedrock"
-    else:
+        try:
+            memo, engine = run_lead_llm(team, lead_agent, task), f"{LABEL} on Amazon Bedrock"
+        except (RuntimeError, httpx.HTTPError) as e:  # e.g. the Bedrock key expired
+            team.note(f"⚠️ Bedrock unavailable, switching to the fixed plan ({str(e)[:60]})")
+    if memo is None:
         memo, engine = run_scripted(team, task), "fixed plan"
     team.note(f"📄 {team.lead} wrote the memo")
     return {"memo": memo, "engine": engine}

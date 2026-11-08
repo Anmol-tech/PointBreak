@@ -17,6 +17,7 @@ from common.dpop import b64url
 
 ADMIN_GROUP = "falcon-admins"
 COOKIE = "vv_session"
+SESSION_SECONDS = 8 * 3600  # a demo day; the Cognito ID token itself only lives 1 hour
 
 
 class FalconSSO:
@@ -68,7 +69,7 @@ class FalconSSO:
             "email": claims.get("email"),
             "name": claims.get("name") or claims.get("email"),
             "groups": claims.get("cognito:groups", []),
-            "exp": claims["exp"],
+            "exp": time.time() + SESSION_SECONDS,
             "issuer": claims["iss"],
         }
         return sid

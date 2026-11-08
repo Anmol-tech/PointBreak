@@ -44,7 +44,10 @@ history: list[dict] = []
 http = httpx.Client(timeout=30)
 
 app = FastAPI(title="Party agent runtime + IdPs")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# Browsers may call the vendor runtime only from pages on this machine (the portal, Falcon's dev server),
+# so a website open in the same browser can't start agents here.
+app.add_middleware(CORSMiddleware, allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+                   allow_methods=["*"], allow_headers=["*"])
 
 
 class PartyError(Exception):

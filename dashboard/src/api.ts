@@ -52,6 +52,7 @@ export function useVaultState() {
     inFlight.current = true
     try {
       const res = await fetch('/api/state')
+      if (res.status === 401) { window.location.reload(); return }  // signed out: show the sign-in screen
       if (res.ok) setState((await res.json()) as VaultState)
     } finally {
       inFlight.current = false
