@@ -13,7 +13,7 @@ import time
 GATEWAY, PROXY = "http://127.0.0.1:8100", "http://127.0.0.1:9101"
 # VAULT_LLM=off keeps answers deterministic even if a Bedrock key is loaded in this shell;
 # VV_COGNITO=off uses the simulated logins even if cognito.json exists.
-os.environ.update(GATEWAY_URL=GATEWAY, PARTY_SIM_URL=PROXY, NO_COLOR="1", VAULT_LLM="off", VV_COGNITO="off")
+os.environ.update(GATEWAY_URL=GATEWAY, PARTY_SIM_URL=PROXY, NO_COLOR="1", VAULT_LLM="off", AGENT_LLM="off", VV_COGNITO="off")
 
 import httpx  # noqa: E402
 import jwt  # noqa: E402
@@ -50,12 +50,6 @@ def wait(url: str):
     raise SystemExit(f"{url} did not start")
 
 
-def mcp_raw(headers: dict) -> dict:
-    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": "ask_question", "arguments": {"question": "revenue"}}}
-    return httpx.post(f"{GATEWAY}/mcp", json=body, headers=headers, timeout=10).json()["result"]
-
-
 def forged_token_request(claims: dict, key) -> httpx.Response:
     assertion = jwt.encode(claims, key, "ES256", headers={"typ": "oauth-id-jag+jwt"})
     return httpx.post(f"{GATEWAY}/token", data={"grant_type": JWT_BEARER, "assertion": assertion},
@@ -73,9 +67,12 @@ def main():
         wait(GATEWAY)
         wait(PROXY)
 
-        # 1. No identity at all
-        r = mcp_raw({})
-        check("no token is denied", r["isError"] and "no agent identity" in r["content"][0]["text"], str(r))
+        # 1. No identity at all: MCP authorization says 401 + where to get a token
+        r = httpx.post(f"{GATEWAY}/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, timeout=10)
+        check("no token gets 401 with resource metadata",
+              r.status_code == 401 and "resource_metadata" in r.headers.get("www-authenticate", ""), str(r.headers))
+        meta = httpx.get(f"{GATEWAY}/.well-known/oauth-protected-resource").json()
+        check("protected resource metadata names the token server", meta["authorization_servers"] == [GATEWAY], str(meta))
 
         # 2. Forged ID-JAGs never become tokens
         k, now = new_key(), int(time.time())
@@ -93,7 +90,7 @@ def main():
         lead = McpAgent("lex-lead", PROXY)
         check("authenticated agent can initialize MCP", "result" in lead.initialize())
         tools = [t["name"] for t in lead.rpc("tools/list")["result"]["tools"]]
-        check("tools are listed", "ask_question" in tools, str(tools))
+        check("only allowed tools are listed", set(tools) == {"ask_question", "list_folders"}, str(tools))
         text, denied = ask(lead, "Key contacts email phone", "Customers")
         check("allowed question is answered", not denied and "Answer from" in text, text)
         check("contact names, emails and phones are masked",
@@ -108,6 +105,16 @@ def main():
         check("folder outside the vendor's work is denied", denied and "not shared" in text, text)
         text, denied = ask(lead, "minimum price", "Board Minutes")
         check("unshared folder is denied", denied and "not shared" in text, text)
+
+        # 4b. Falcon turns an MCP tool off for the vendor: effective on the very next call
+        httpx.post(f"{GATEWAY}/api/parties/LexPartners/tools", json={"tools": ["list_folders"]})
+        text, denied = ask(lead, "top customers")
+        check("tool turned off by Falcon is blocked on the next call", denied and "turned off" in text, text)
+        tools = [t["name"] for t in lead.rpc("tools/list")["result"]["tools"]]
+        check("turned-off tool disappears from tools/list", tools == ["list_folders"], str(tools))
+        httpx.post(f"{GATEWAY}/api/parties/LexPartners/tools", json={"tools": ["list_folders", "ask_question"]})
+        text, denied = ask(lead, "top customers")
+        check("tool turned back on works again", not denied, text)
 
         # 5. Tables only leave as totals (Ledgerly's audit work covers HR)
         create_root("Ledgerly", "li@ledgerly.io", "ledgerly-check", proxy=PROXY)
@@ -132,6 +139,8 @@ def main():
         results = stolen_token_attack.run("contracts-reviewer", PROXY, GATEWAY)
         check("stolen badge without a proof is denied", results[0][1] and "DPoP proof required" in results[0][0], results[0][0])
         check("stolen badge with the attacker's key is denied", results[1][1] and "different key" in results[1][0], results[1][0])
+        check("intercepted ID-JAG cannot be redeemed with another key",
+              len(results) == 3 and results[2][1] and "different agent key" in results[2][0], str(results[2:]))
 
         # 8. Leak tracing
         with_marks, stripped = leak_demo.run("contracts-reviewer", PROXY, GATEWAY)
@@ -209,6 +218,26 @@ def main():
         state = httpx.get(f"{GATEWAY}/api/state").json()
         check("dashboard state lists agents and events", len(state["agents"]) >= 10 and len(state["events"]) > 15,
               f"{len(state['agents'])} agents, {len(state['events'])} events")
+
+        # 14. Multi-agent team: lead creates helpers, Falcon stops one mid-task, the other finishes
+        httpx.post(f"{GATEWAY}/api/reset")
+        from party.ai_team import run_ai_team
+        notes = []
+
+        def stop_contracts_after_first_answer(agent, count):
+            if agent == "contracts-reviewer" and count == 1:
+                httpx.post(f"{GATEWAY}/api/agents/LexPartners:contracts-reviewer/revoke")
+
+        result = run_ai_team(proxy=PROXY, note=notes.append, after_call=stop_contracts_after_first_answer, pace=0)
+        memo = result["memo"]
+        check("team: helper asking for a folder its lead lacks is refused",
+              any("finance-reviewer" in n and "refused" in n for n in notes), "\n".join(notes))
+        check("team: helper stopped mid-task is blocked on its next call", "contracts-reviewer: STOPPED" in memo, memo)
+        check("team: the other helper keeps working", "customer-reviewer: 2 of 3" in memo, memo)
+        agents = {a["name"]: a for a in httpx.get(f"{GATEWAY}/api/state").json()["agents"]}
+        check("team: helper identity carries the full chain",
+              agents["customer-reviewer"]["chain"] == ["LexPartners", "dana@lexpartners.com", "lex-lead", "customer-reviewer"],
+              str(agents.get("customer-reviewer")))
     finally:
         for p in procs:
             p.terminate()

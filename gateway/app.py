@@ -92,6 +92,19 @@ TOOLS = [
 ]
 TOOL_SCOPE = {"list_folders": "vault:list", "ask_question": "vault:ask",
               "get_document": "vault:read-raw", "export_all": "vault:export"}
+SELECTABLE_TOOLS = ("list_folders", "ask_question")  # get_document / export_all can never be granted
+
+
+def allowed_scope(agent: dict) -> set[str]:
+    """Scopes on the agent's badge that Falcon still allows for its vendor right now."""
+    party = store.parties.get(agent["party"]) or {}
+    return set(agent["scope"]) & set(party.get("scope", []))
+
+
+def visible_tools(agent: dict) -> list[dict]:
+    """MCP tools/list only shows tools this agent may call."""
+    scope = allowed_scope(agent)
+    return [t for t in TOOLS if TOOL_SCOPE[t["name"]] in scope]
 
 
 def invite_parties():
@@ -186,6 +199,26 @@ def jwks():
     return identity.jwks()
 
 
+@app.get("/.well-known/oauth-protected-resource")
+def protected_resource():
+    """RFC 9728 metadata, as the MCP authorization spec expects from an MCP server."""
+    return {"resource": f"{cfg['gateway_url']}/mcp", "authorization_servers": [cfg["gateway_url"]],
+            "scopes_supported": sorted(set(TOOL_SCOPE[t] for t in SELECTABLE_TOOLS)),
+            "bearer_methods_supported": ["header"], "dpop_signing_alg_values_supported": ["ES256"],
+            "dpop_bound_access_tokens_required": True, "resource_name": f"{cfg.get('client', 'Falcon')} vault"}
+
+
+@app.get("/.well-known/oauth-authorization-server")
+def authorization_server():
+    """RFC 8414 metadata: agents get badges with an ID-JAG (JWT bearer) or by token exchange (sub-agents)."""
+    return {"issuer": cfg["audience"], "token_endpoint": f"{cfg['gateway_url']}/token",
+            "jwks_uri": f"{cfg['gateway_url']}/.well-known/jwks.json",
+            "grant_types_supported": [JWT_BEARER, TOKEN_EXCHANGE],
+            "token_endpoint_auth_methods_supported": ["none"],
+            "dpop_signing_alg_values_supported": ["ES256"],
+            "scopes_supported": sorted(set(TOOL_SCOPE[t] for t in SELECTABLE_TOOLS))}
+
+
 # --- MCP endpoint -------------------------------------------------------------
 
 def rpc_result(msg_id, result):
@@ -224,7 +257,9 @@ def call_tool(agent: dict, name: str, args: dict) -> dict:
     if name == "export_all":
         return deny(agent_id, party_name, name, "bulk export is never allowed")
     if TOOL_SCOPE[name] not in agent["scope"]:
-        return deny(agent_id, party_name, name, f"tool {name} is not allowed for this agent")
+        return deny(agent_id, party_name, name, f"tool {name} is not on this agent's badge")
+    if TOOL_SCOPE[name] not in allowed_scope(agent):
+        return deny(agent_id, party_name, name, f"Falcon has turned off {name} for {party_name}")
 
     party = store.parties[party_name]
     folders = [f for f in agent["folders"] if f in party["folders"]]
@@ -279,6 +314,12 @@ async def mcp(request: Request):
 
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     proof = request.headers.get("dpop")
+    if not token:  # MCP authorization: tell the client where to get a token
+        return JSONResponse(rpc_error(None, -32001, "VendorVault: no agent identity presented"), status_code=401,
+                            headers={"WWW-Authenticate": f'DPoP algs="ES256", resource_metadata="{cfg["gateway_url"]}/.well-known/oauth-protected-resource"'})
+    if scheme.lower() != "dpop":
+        return JSONResponse(rpc_error(None, -32001, "VendorVault: use the DPoP token scheme"), status_code=401,
+                            headers={"WWW-Authenticate": 'DPoP algs="ES256", error="invalid_token"'})
     auth: dict = {}
 
     def authenticate():
@@ -323,7 +364,7 @@ async def mcp(request: Request):
                 "instructions": "Deal data room. Ask questions with ask_question; documents are never released.",
             }))
         elif method == "tools/list":
-            responses.append(rpc_result(msg_id, {"tools": TOOLS}))
+            responses.append(rpc_result(msg_id, {"tools": visible_tools(a["agent"])}))
         else:
             responses.append(rpc_error(msg_id, -32601, f"method {method} not found"))
 
@@ -343,7 +384,7 @@ def agent_view(a: dict) -> dict:
     calls = sum(1 for e in store.events if e.get("agent") == a["id"] and e.get("kind") == "call")
     seen = sum(1 for agents in store.revealed.get(a["party"], {}).values() if a["id"] in agents)
     return {k: a[k] for k in ("id", "name", "party", "user", "parent", "status", "scope", "folders",
-                              "created", "revoked_reason", "fingerprint")} | {
+                              "created", "revoked_reason", "fingerprint", "jkt")} | {
         "chain": identity.chain_label(a["id"]), "calls": calls, "sections_seen": seen}
 
 
@@ -508,6 +549,19 @@ async def set_folders(name: str, request: Request):
     return {"folders": folders}
 
 
+@app.post("/api/parties/{name}/tools")
+async def set_tools(name: str, request: Request):
+    if name not in store.parties:
+        return JSONResponse({"error": f"unknown vendor {name}"}, status_code=404)
+    tools = [t for t in (await request.json()).get("tools", []) if t in SELECTABLE_TOOLS]
+    with store.lock:
+        store.parties[name]["scope"] = sorted(TOOL_SCOPE[t] for t in tools)
+        store.bump()
+    store.log(kind="share", decision="info", party=name, agent=None, chain=[name],
+              reason=f"MCP tools allowed for {name}: {', '.join(tools) or 'none'}{by(request)}")
+    return {"tools": tools}
+
+
 @app.post("/api/trace")
 async def trace(request: Request):
     text = (await request.json()).get("text", "")
@@ -538,6 +592,7 @@ def reset():
     identity.jwks_cache.clear()
     invite_parties()
     demo.last = None
+    demo.notes = []
     try:  # also forget the party side's agents and re-enable its IdPs
         httpx.post(f"{cfg['party_sim_url']}/reset", timeout=3)
     except httpx.HTTPError:

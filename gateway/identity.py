@@ -146,6 +146,11 @@ class Identity:
             pop = verify_proof(proof, "POST", token_url)
         except DPoPError as e:
             raise AuthError(str(e))
+        bound = (claims.get("cnf") or {}).get("jkt")
+        if not bound:
+            raise AuthError("ID-JAG is not bound to an agent key (missing cnf.jkt)")
+        if bound != pop["jkt"]:
+            raise AuthError("ID-JAG was issued to a different agent key (stolen assertion?)")
         requested = set(claims.get("scope", "").split()) or set(party["scope"])
         agent = self._register(
             party=party["name"],

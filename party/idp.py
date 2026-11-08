@@ -86,8 +86,12 @@ class PartyIdP:
                   "exp": now + 3600, "jti": uuid.uuid4().hex}
         return jwt.encode(claims, self.key, algorithm="ES256", headers={"kid": self.kid})
 
-    def id_jag(self, id_token: str, client_id: str, scope: str = "") -> str:
-        """Token exchange at the party IdP: user's ID token in, ID-JAG for VendorVault out."""
+    def id_jag(self, id_token: str, client_id: str, scope: str = "", jkt: str | None = None) -> str:
+        """Token exchange at the party IdP: user's ID token in, ID-JAG for VendorVault out.
+
+        `jkt` is the thumbprint of the agent's own key (its workload identity). The ID-JAG carries it
+        as a confirmation claim (RFC 7800 cnf), so only that agent can redeem it at VendorVault.
+        """
         if not self.issuing:
             raise IdPError(f"{self.name}'s admin has stopped issuing agent credentials for this deal")
         if self.cognito:
@@ -116,5 +120,7 @@ class PartyIdP:
         }
         if scope:
             claims["scope"] = scope
+        if jkt:
+            claims["cnf"] = {"jkt": jkt}
         self.issued += 1
         return jwt.encode(claims, self.key, algorithm="ES256", headers={"typ": ID_JAG_TYP, "kid": self.kid})

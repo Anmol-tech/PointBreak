@@ -12,14 +12,15 @@ const LiveWorld = lazy(() => import('./LiveWorld'))
 type LogEntry = { id: number; text: string; decision: VaultEvent['decision'] }
 
 const SCENARIOS: [string, string][] = [
-  ['team', 'Vendor agent team'],
+  ['ai-team', 'AI agent team (Claude)'],
+  ['team', 'Scripted agent team'],
   ['onboard', 'Onboard a new vendor'],
   ['stolen', 'Stolen badge'],
   ['scrape', 'Compromised vendor tool'],
   ['leak', 'Leak trace'],
 ]
 const CHECK_LABELS = ['Badge valid', 'Signed with own key', 'Still allowed in', 'Vendor not locked', 'Action allowed', 'Folder shared']
-const ABILITY: Record<string, string> = { 'vault:ask': 'ask questions', 'vault:list': 'see the folder list' }
+const MCP_TOOLS: [string, string, string][] = [['ask_question', 'vault:ask', 'ask_question'], ['list_folders', 'vault:list', 'list_folders']]
 
 function vendorTone(p: Party) {
   if (p.status === 'offboarded') return 'is-off'
@@ -54,7 +55,8 @@ function AgentCard({ agent, state, pending, onAction, onSelect }: {
         <div><dt>Vendor</dt><dd><button type="button" className="text-button" onClick={() => onSelect({ kind: 'vendor', id: agent.party })}>{agent.party}</button></dd></div>
         <div><dt>Created by</dt><dd>{agent.parent ? <button type="button" className="text-button" onClick={() => onSelect({ kind: 'agent', id: agent.parent! })}>{agent.parent.split(':')[1]}</button> : `${agent.user} (main agent)`}</dd></div>
         <div><dt>May ask about</dt><dd>{agent.folders.join(', ') || 'nothing'}</dd></div>
-        <div><dt>May</dt><dd>{agent.scope.map((s) => ABILITY[s] ?? s).join(' and ')}</dd></div>
+        <div><dt>MCP tools</dt><dd>{agent.scope.filter((s) => party?.scope.includes(s)).map((s) => MCP_TOOLS.find((t) => t[1] === s)?.[0] ?? s).join(', ') || 'none'}</dd></div>
+        <div><dt>Workload key</dt><dd title={`cnf.jkt ${agent.jkt}`}><code>{agent.jkt.slice(0, 12)}…</code> <small className="muted">badge only works with this key</small></dd></div>
         <div><dt>Activity</dt><dd>{agent.calls} requests · {agent.sections_seen} sections seen</dd></div>
         {helpers.length > 0 && <div><dt>Helpers</dt><dd>{helpers.map((h) => <button key={h.id} type="button" className="text-button" onClick={() => onSelect({ kind: 'agent', id: h.id })}>{h.name}</button>)}</dd></div>}
       </dl>
@@ -108,6 +110,19 @@ function VendorCard({ party, state, pending, onAction, onSelect }: {
         <div className={`coverage-track ${party.coverage >= state.thresholds.lock ? 'coverage-locked' : party.coverage >= state.thresholds.alert ? 'coverage-alert' : ''}`}><span style={{ width: `${Math.min(pct, 100)}%` }} /></div>
       </div>
       {party.lock_reason && <p className="fp-warning"><Icon name="alert" />{party.lock_reason}</p>}
+      {party.status === 'active' && (
+        <fieldset className="fp-tool-toggles">
+          <legend className="eyebrow fp-sub">MCP TOOLS ITS AGENTS MAY CALL</legend>
+          {MCP_TOOLS.map(([tool, scope]) => {
+            const on = party.scope.includes(scope)
+            return <label key={tool}><input type="checkbox" checked={on} disabled={pending} onChange={() => {
+              const next = MCP_TOOLS.filter(([, s]) => (s === scope ? !on : party.scope.includes(s))).map(([t]) => t)
+              void onAction('Update MCP tools', () => api.setTools(party.name, next))
+            }} /><code>{tool}</code></label>
+          })}
+          <small className="muted">Takes effect on the next call. get_document and export_all can never be turned on.</small>
+        </fieldset>
+      )}
       <span className="eyebrow fp-sub">AGENTS · {agents.length}</span>
       {agents.length === 0 ? <p className="muted small">No agents yet.</p> : (
         <ul className="fp-agents">
@@ -159,6 +174,11 @@ export function WorldStage({ state, pending, onRun, onReset, onAction, onFlat }:
   const agent = selected?.kind === 'agent' ? state.agents.find((a) => a.id === selected.id) : undefined
   const vendor = selected?.kind === 'vendor' ? state.parties.find((p) => p.name === selected.id) : undefined
   const currentTone = current ? (current.decision === 'denied' ? 'is-bad' : current.decision === 'alert' ? 'is-warn' : 'is-ok') : ''
+  const notes = state.demo.notes ?? []
+  const teamRunning = state.demo.running === 'ai-team'
+  const memo = !state.demo.running && state.demo.last?.name === 'ai-team' ? state.demo.last : null
+  const leadId = 'LexPartners:lex-lead'
+  const team = state.agents.filter((a) => a.id === leadId || a.parent === leadId)
 
   return (
     <section className="world-stage" aria-label="Live 3D world of vendor agents">
@@ -178,7 +198,7 @@ export function WorldStage({ state, pending, onRun, onReset, onAction, onFlat }:
             </button>
           ))}
         </div>
-        {state.demo.last && !state.demo.running && <p className={`fp-result ${state.demo.last.ok ? '' : 'is-bad'}`} title={state.demo.last.message}>{state.demo.last.message}</p>}
+        {state.demo.last && !state.demo.running && !memo && <p className={`fp-result ${state.demo.last.ok ? '' : 'is-bad'}`} title={state.demo.last.message}>{state.demo.last.message}</p>}
         <div className="fp-tools">
           <button type="button" className="text-button" disabled={busy} onClick={() => { setSelected(null); onReset() }}><Icon name="reset" />Reset</button>
           <button type="button" className="text-button" disabled={!state.events.length} onClick={() => setReplay((r) => r + 1)}>Replay 10</button>
@@ -186,6 +206,36 @@ export function WorldStage({ state, pending, onRun, onReset, onAction, onFlat }:
           <button type="button" className="text-button" onClick={onFlat}>Flat view</button>
         </div>
       </div>
+
+      {(teamRunning || memo) && notes.length > 0 && (
+        <div className="float-panel fp-team">
+          <span className="eyebrow">{teamRunning ? <><span className="fp-pulse" />AGENT TEAM AT WORK</> : 'AGENT TEAM · DONE'}</span>
+          {teamRunning && <p className="fp-tip">Stop a helper while it works: its next call is refused and the other helper keeps going. Stopping the lead stops its whole team.</p>}
+          {team.length > 0 && (
+            <ul className="fp-team-agents">
+              {team.map((a) => (
+                <li key={a.id}>
+                  <button type="button" className="fp-team-name" onClick={() => setSelected({ kind: 'agent', id: a.id })}>
+                    <span className={`fp-dot ${a.status === 'revoked' ? 'is-off' : 'is-ok'}`} />{a.name}<small>{a.parent ? 'helper' : 'lead'}</small>
+                  </button>
+                  <button type="button" className="button button-danger button-small" disabled={pending || a.status === 'revoked'} onClick={() => void onAction('Stop agent', () => api.revokeAgent(a.id))}>
+                    {a.status === 'revoked' ? 'Stopped' : 'Stop'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {memo && (
+            <details className="fp-memo" open>
+              <summary>{memo.ok ? 'Memo from the lead agent' : 'The team stopped'}</summary>
+              <p>{memo.message}</p>
+            </details>
+          )}
+          <ol className="fp-team-notes">
+            {[...notes].reverse().slice(0, memo ? 4 : 8).map((n) => <li key={n.ts + n.text}>{n.text}</li>)}
+          </ol>
+        </div>
+      )}
 
       <div className="float-panel fp-vendors">
         <span className="eyebrow">VENDORS · {state.parties.length}</span>

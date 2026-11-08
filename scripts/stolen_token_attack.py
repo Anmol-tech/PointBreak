@@ -1,4 +1,8 @@
-"""Malware copies an agent's access token and replays it from another machine.
+"""Malware copies an agent's credentials and replays them from another machine.
+
+1. the access token alone (no key proof)
+2. the access token with the attacker's own key
+3. an ID-JAG intercepted in transit, redeemed with the attacker's key
 
 Usage: python -m scripts.stolen_token_attack [agent-name]
 """
@@ -31,7 +35,26 @@ def run(agent: str = "contracts-reviewer", proxy: str = PROXY_URL, gateway: str 
     attacker_key = new_key()
     results.append(attempt(token, make_proof(attacker_key, "POST", f"{gateway}/mcp", token), gateway))
     say("attacker (own key)", *results[1])
+
+    lead = lead_of(agent, proxy)
+    r = httpx.get(f"{proxy}/agents/{lead}/intercepted-id-jag", timeout=10)
+    if r.status_code == 200:
+        token_url = f"{gateway}/token"
+        resp = httpx.post(token_url, data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                                           "assertion": r.json()["assertion"]},
+                          headers={"DPoP": make_proof(attacker_key, "POST", token_url)}, timeout=10)
+        text = resp.json().get("error_description") or "attacker got a badge"
+        results.append((text, resp.status_code != 200))
+        say(f"attacker (intercepted {lead}'s ID-JAG)", *results[2])
     return results
+
+
+def lead_of(agent: str, proxy: str) -> str:
+    """The root agent of `agent`'s branch (only root agents get ID-JAGs)."""
+    by_name = {a["name"]: a for a in httpx.get(f"{proxy}/agents", timeout=10).json()}
+    while by_name.get(agent, {}).get("parent"):
+        agent = by_name[agent]["parent"]
+    return agent
 
 
 if __name__ == "__main__":

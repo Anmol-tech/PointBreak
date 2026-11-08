@@ -619,3 +619,23 @@ summary { cursor: pointer; }
 .vendor-signin.is-compact { margin-top: 0; flex: 1 1 260px; }
 .vendor-signin-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 @media (max-width: 760px) { .user-chip-text { display: none; } .user-chip { margin-left: 0; } }
+
+/* AI agent team narration and memo */
+.stage-left > .fp-team { flex: 1 1 auto; min-height: 120px; overflow: auto; }
+.fp-team .fp-tip { margin: 6px 0 4px; }
+.fp-team-notes { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; font-size: 11px; line-height: 1.45; }
+.fp-team-notes li { overflow-wrap: anywhere; opacity: .78; }
+.fp-team-notes li:first-child { opacity: 1; }
+.fp-memo { margin-top: 10px; font-size: 11px; line-height: 1.5; }
+.fp-memo summary { cursor: pointer; font-weight: 600; color: #5eead4; }
+.fp-memo p { white-space: pre-wrap; margin: 6px 0 0; max-height: 220px; overflow: auto; }
+.fp-tool-toggles { border: 0; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; font-size: 12px; }
+.fp-tool-toggles label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.fp-tool-toggles small { font-size: 10px; line-height: 1.4; }
+.stage-left > .fp-scenarios { flex-shrink: 0; }
+.stage-left > .fp-team { flex: 1 1 0; }
+.stage-left:has(> .fp-team) > .fp-vendors { flex: 0 0 auto; max-height: 132px; margin-top: 0; }
+.fp-team-agents { list-style: none; margin: 8px 0 4px; padding: 0; display: grid; gap: 6px; }
+.fp-team-agents li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fp-team-name { display: flex; align-items: center; gap: 7px; background: none; border: 0; padding: 0; color: inherit; font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
+.fp-team-name small { opacity: .6; font-size: 10px; }

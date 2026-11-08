@@ -6,7 +6,8 @@ import time
 import httpx
 
 SCENARIOS = {
-    "team": "Vendor agent team",
+    "ai-team": "AI agent team",
+    "team": "Scripted agent team",
     "onboard": "Onboard a new vendor",
     "stolen": "Stolen badge",
     "scrape": "Compromised vendor tool",
@@ -20,6 +21,13 @@ NEW_VENDOR = {
     "folders": ["Customers"],
     "scope": ["vault:ask", "vault:list"],
 }
+
+
+def _ai_team(note):
+    """LexPartners' lead agent (Claude on Bedrock) plans the work and hands it to helper agents it creates."""
+    from party.ai_team import run_ai_team
+    result = run_ai_team(note=note, pace=2.0)
+    return f"Memo by {result['engine']}:\n{result['memo']}"
 
 
 def _team():
@@ -56,7 +64,7 @@ def _stolen():
     except httpx.HTTPStatusError:
         raise RuntimeError("unknown agent contracts-reviewer")
     blocked = sum(1 for _, denied in results if denied)
-    return f"Attacker replayed contracts-reviewer's badge twice; {blocked} of 2 attempts blocked"
+    return f"Attacker replayed stolen credentials {len(results)} ways; {blocked} of {len(results)} blocked"
 
 
 def _scrape():
@@ -73,11 +81,12 @@ def _leak():
     return "Leak traced to " + " ← ".join(reversed(with_marks["matches"][0]["chain"]))
 
 
-RUNNERS = {"team": _team, "onboard": _onboard, "stolen": _stolen, "scrape": _scrape, "leak": _leak}
+TAKES_NOTES = {"ai-team"}
+RUNNERS = {"ai-team": _ai_team, "team": _team, "onboard": _onboard, "stolen": _stolen, "scrape": _scrape, "leak": _leak}
 
 HINTS = {
-    "unknown agent": "Run 'Vendor agent team' first.",
-    "not registered": "Run 'Vendor agent team' first.",
+    "unknown agent": "Run 'AI agent team' first.",
+    "not registered": "Run 'AI agent team' first.",
     "already a vendor": "Northbeam is already onboarded. Click Reset demo first.",
     "revoked": "Some agents are stopped. Click Reset demo first.",
     "locked": "That vendor is locked. Click Reset demo first.",
@@ -88,16 +97,24 @@ class DemoRunner:
     def __init__(self):
         self.running: str | None = None
         self.last: dict | None = None
+        self.notes: list[dict] = []  # live narration from scenarios that think out loud (the AI team)
         self.lock = threading.Lock()
+        self.on_change = lambda: None
 
     def status(self) -> dict:
-        return {"running": self.running, "last": self.last, "scenarios": SCENARIOS}
+        return {"running": self.running, "last": self.last, "scenarios": SCENARIOS, "notes": self.notes[-40:]}
+
+    def note(self, text: str):
+        self.notes.append({"ts": time.time(), "text": text})
+        self.on_change()
 
     def start(self, name: str, on_change) -> bool:
         with self.lock:
             if self.running:
                 return False
             self.running = name
+            self.notes = []
+            self.on_change = on_change
         on_change()
         threading.Thread(target=self._run, args=(name, on_change), daemon=True).start()
         return True
@@ -105,7 +122,8 @@ class DemoRunner:
     def _run(self, name: str, on_change):
         started = time.time()
         try:
-            message, ok = RUNNERS[name](), True
+            runner = RUNNERS[name]
+            message, ok = (runner(self.note) if name in TAKES_NOTES else runner()), True
         except (Exception, SystemExit) as e:  # leak_demo exits when the agent can't get an answer
             text = str(e) or e.__class__.__name__
             hint = next((h for key, h in HINTS.items() if key in text.lower()), "")

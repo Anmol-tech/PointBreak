@@ -38,6 +38,7 @@ export const api = {
   inviteVendor: (vendor: { name: string; purpose: string; contact: string; folders: string[]; scope: string[] }) =>
     post<{ name: string; invite_code: string }>('/api/vendors', vendor),
   offboardVendor: (name: string) => post(`/api/vendors/${encodeURIComponent(name)}/offboard`),
+  setTools: (name: string, tools: string[]) => post(`/api/parties/${encodeURIComponent(name)}/tools`, { tools }),
 }
 
 /** Live gateway state: refetches whenever the server-sent event stream reports a new version. */

@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 
 from common.cognito import load_config
 from common.config import ROOT, load
-from common.dpop import make_proof, new_key
+from common.dpop import make_proof, new_key, public_jwk, thumbprint
 from party.idp import IdPError, PartyIdP
 
 JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer"
@@ -71,7 +71,8 @@ def obtain_root(a: dict):
     idp = idps[a["party"]]
     try:
         id_token = idp.login(a["user"])
-        assertion = idp.id_jag(id_token, a["name"], " ".join(a["scope"] or []))
+        # The agent's key thumbprint goes into the ID-JAG: the vendor vouches for this exact workload.
+        assertion = idp.id_jag(id_token, a["name"], " ".join(a["scope"] or []), thumbprint(public_jwk(a["key"])))
     except IdPError as e:
         raise PartyError(str(e))
     proof = make_proof(a["key"], "POST", TOKEN_URL)
@@ -232,6 +233,20 @@ async def ask(name: str, request: Request):
     result = body.get("result") or {}
     text = "".join(c.get("text", "") for c in result.get("content", [])) or body.get("error", {}).get("message", "")
     return {"text": text, "denied": bool(result.get("isError")) or "error" in body}
+
+
+@app.get("/agents/{name}/intercepted-id-jag")
+def intercepted_id_jag(name: str):
+    """Attack simulation only: an ID-JAG copied in transit. It is bound to the agent's key, not the attacker's."""
+    if name not in agents or agents[name]["parent"]:
+        return JSONResponse({"error": "unknown lead agent"}, status_code=404)
+    a = agents[name]
+    idp = idps[a["party"]]
+    try:
+        assertion = idp.id_jag(idp.login(a["user"]), a["name"], "", thumbprint(public_jwk(a["key"])))
+    except IdPError as e:
+        return JSONResponse({"error": str(e)}, status_code=403)
+    return {"assertion": assertion}
 
 
 @app.get("/agents/{name}/stolen-token")

@@ -49,6 +49,7 @@ export interface Agent {
   created: number
   revoked_reason: string | null
   fingerprint: string
+  jkt: string
   chain: string[]
   calls: number
   sections_seen: number
@@ -64,6 +65,7 @@ export interface DemoStatus {
   running: string | null
   last: { name: string; ok: boolean; message: string; seconds: number } | null
   scenarios: Record<string, string>
+  notes?: { ts: number; text: string }[]
 }
 
 export interface VaultState {
