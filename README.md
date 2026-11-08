@@ -25,7 +25,8 @@ Companies now let outside vendors (law firms, auditors, consultants) point their
 | Question | How it's verified |
 |---|---|
 | Which vendor? | Falcon invites the vendor; once it connects its login, the gateway trusts only that vendor's IdP issuer (JWKS fetched from the issuer) |
-| Which person? | OIDC-style login at the vendor's **own** IdP (`party/idp.py`, standing in for Okta/Entra) |
+| Which person? | Real enterprise login with **Amazon Cognito**: each vendor has its own user pool; employees sign in there and the vendor's IdP (`party/idp.py`) verifies Cognito's ID token before vouching for an agent. Without `cognito.json`, a simulated login is used |
+| Which Falcon staff? | **Amazon Cognito hosted login** (OIDC code flow + PKCE) in front of the control center. Only the `falcon-admins` group can stop agents, lock or onboard vendors; every action is logged with the admin's email |
 | Party vouches for its agent | **ID-JAG** (IETF draft, Okta/Ping): the vendor's login applies *its* policy, then signs an assertion for VendorVault. The vendor's admin can stop issuing at the source |
 | Which agent? | Agent key pair; the access token is **bound to that key** (`cnf.jkt`, DPoP RFC 9449). A stolen token is useless without the key |
 | Sub-agents | **Token exchange** (RFC 8693 `act` chain): `contracts-reviewer ← lex-lead ← dana@lexpartners.com ← LexPartners`. A child can never get more than its parent |
@@ -48,6 +49,15 @@ Companies now let outside vendors (law firms, auditors, consultants) point their
 Without `.env` it still works: the vault agent answers with local search instead of Bedrock. The dashboard header shows which one is active.
 
 **Vault agent answers:** written by **Amazon Nova Pro on Bedrock** (`vault_llm` in `config.json`). Excerpts are masked *before* the model sees them, and any Bedrock error falls back to local search.
+
+**Enterprise login (Amazon Cognito), one-time setup.** With AWS CLI credentials that can manage Cognito:
+```bash
+.venv/bin/pip install boto3
+```
+```bash
+.venv/bin/python -m scripts.setup_cognito
+```
+It reads AWS credentials from `.env` (or your AWS CLI profile). It creates the `vendorvault-falcon` pool (hosted login, `falcon-admins` group, admin + viewer users) and one pool per vendor with its employees, then writes `cognito.json` and the demo passwords to `.demo-users` (both git-ignored). Restart `./run.sh` and open http://localhost:8000 (the sign-in callback is registered for port 8000). The servers only call public Cognito endpoints, so they need no AWS credentials at runtime. `VV_COGNITO=off` switches back to simulated logins.
 
 Dashboard with hot reload while editing: `npm --prefix dashboard run dev` → http://localhost:5173
 

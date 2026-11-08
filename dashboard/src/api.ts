@@ -14,6 +14,18 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return res.json() as Promise<T>
 }
 
+export interface FalconUser { email: string; name: string; groups: string[]; admin: boolean }
+export interface FalconAuth { enabled: boolean; provider?: string; pool?: string; user: FalconUser | null }
+
+/** Falcon workforce sign-in (Amazon Cognito). When disabled, the control center is open locally. */
+export function useFalconAuth() {
+  const [auth, setAuth] = useState<FalconAuth | null>(null)
+  useEffect(() => {
+    fetch('/auth/me').then((res) => res.json() as Promise<FalconAuth>).then(setAuth).catch(() => setAuth({ enabled: false, user: null }))
+  }, [])
+  return auth
+}
+
 export const api = {
   revokeAgent: (id: string) => post(`/api/agents/${encodeURIComponent(id)}/revoke`),
   lockParty: (name: string) => post(`/api/parties/${encodeURIComponent(name)}/lock`),
@@ -102,6 +114,8 @@ export const vendorApi = {
     partyCall<{ text: string; denied: boolean }>(`/agents/${encodeURIComponent(agent)}/ask`, 'POST', { tool, arguments: args }),
   stopIssuing: (party: string) => partyCall(`/idp/${encodeURIComponent(party)}/stop`, 'POST'),
   resumeIssuing: (party: string) => partyCall(`/idp/${encodeURIComponent(party)}/resume`, 'POST'),
+  signIn: (party: string, email: string, password: string) =>
+    partyCall<{ email: string; name?: string; provider: string }>(`/api/vendor/${encodeURIComponent(party)}/signin`, 'POST', { email, password }),
 }
 
 /** One vendor's own view, refreshed every 2 seconds. */

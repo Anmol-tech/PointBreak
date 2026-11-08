@@ -7,3 +7,5 @@ dashboard/dist/
 .env
 logs/
 .claude/
+cognito.json
+.demo-users

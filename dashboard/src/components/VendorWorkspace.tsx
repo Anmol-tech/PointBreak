@@ -19,6 +19,7 @@ function statusTag(agent: VendorAgent) {
 
 function entryTitle(e: VendorEntry) {
   if (e.kind === 'onboard') return 'Company login connected'
+  if (e.kind === 'signin') return `${e.user} signed in`
   if (e.kind === 'badge') {
     if (e.decision === 'denied') return `${e.agent} could not get a badge`
     return e.parent ? `${e.parent} created helper ${e.agent}` : `${e.agent} got a badge`
@@ -32,6 +33,7 @@ function entryTitle(e: VendorEntry) {
 
 function entryBody(e: VendorEntry) {
   if (e.kind === 'onboard') return `${e.reason ?? ''}. Allowed folders: ${e.folders?.join(', ') || 'none'}.`
+  if (e.kind === 'signin') return e.reason ?? ''
   if (e.kind === 'badge') {
     if (e.decision === 'denied') return e.reason ?? ''
     const abilities = (e.scope ?? []).map((s) => ABILITY[s] ?? s).join(' and ')
@@ -141,6 +143,8 @@ export function VendorWorkspace({ party, pending, onAction }: { party: string; p
   const canAsk = accessOpen && current?.status === 'active'
   const searchFolder = current?.granted_folders?.includes(folder) ? folder : ''
 
+  const cognito = state.sso?.provider === 'Amazon Cognito'
+  const signedIn = new Set(state.sso?.signed_in ?? [])
   const update: ActionHandler = (label, action) => onAction(label, async () => { await action(); await refresh() })
   function chooseAgent(name: string) { setAskAs(name); setFolder(''); setReply(null); setView('ask') }
   async function send(tool: string, args: Record<string, string>) {
@@ -183,8 +187,9 @@ export function VendorWorkspace({ party, pending, onAction }: { party: string; p
     {view === 'agents' && <div className="vendor-agents-workspace">
       <section className="company-panel vendor-start-panel"><div className="section-heading"><div><h2>Start an agent</h2><p className="muted vendor-section-copy">Choose who it works for. Your client’s access limits apply automatically.</p></div><Icon name="agents" /></div>
         {!state.issuing && <p className="company-warning"><Icon name="alert" />Your company login is paused. Resume issuing in Company settings before starting an agent.</p>}
+        {cognito && currentUser && !signedIn.has(currentUser) && <div className="company-warning vendor-signin-inline"><Icon name="key" /><span>{currentUser} has not signed in with {party}’s company login yet.</span><EmployeeSignIn party={party} users={[currentUser]} pending={pending} onAction={update} compact /></div>}
         <form onSubmit={(event) => { event.preventDefault(); if (!pending && accessOpen && state.issuing && currentUser && suggested.trim()) void update('Start agent', async () => { await vendorApi.startAgent(party, currentUser, suggested.trim()); setAgentName(''); chooseAgent(suggested.trim()) }) }}>
-          <div className="vendor-start-fields"><div><label className="field-label" htmlFor="vendor-user">Employee</label><select id="vendor-user" value={currentUser} disabled={pending} onChange={(event) => { setUser(event.target.value); setAgentName('') }}>{state.users.map((employee) => <option key={employee} value={employee}>{employee}</option>)}</select></div><div><label className="field-label" htmlFor="vendor-agent-name">Agent name</label><input id="vendor-agent-name" disabled={pending} value={suggested} onChange={(event) => setAgentName(event.target.value.replace(/\s+/g, '-'))} /></div></div><button type="submit" className="button button-primary" disabled={pending || !suggested.trim() || !currentUser || !state.issuing || !accessOpen}><Icon name="key" />{pending ? 'Starting agent…' : 'Start agent'}</button>
+          <div className="vendor-start-fields"><div><label className="field-label" htmlFor="vendor-user">Employee</label><select id="vendor-user" value={currentUser} disabled={pending} onChange={(event) => { setUser(event.target.value); setAgentName('') }}>{state.users.map((employee) => <option key={employee} value={employee}>{employee}</option>)}</select></div><div><label className="field-label" htmlFor="vendor-agent-name">Agent name</label><input id="vendor-agent-name" disabled={pending} value={suggested} onChange={(event) => setAgentName(event.target.value.replace(/\s+/g, '-'))} /></div></div><button type="submit" className="button button-primary" disabled={pending || !suggested.trim() || !currentUser || !state.issuing || !accessOpen || (cognito && !signedIn.has(currentUser))}><Icon name="key" />{pending ? 'Starting agent…' : 'Start agent'}</button>
         </form>
       </section>
       <section className="company-panel"><div className="section-heading"><h2>Your agents</h2><span className="count">{state.agents.length}</span></div>{state.agents.length === 0 ? <p className="small muted">No agents yet. Start one using the form above.</p> : <ul className="vendor-agents">{state.agents.filter((agent) => !agent.parent).map((agent) => <AgentRow key={agent.name} agent={agent} all={state.agents} depth={0} currentName={current?.name} pending={pending} onUse={chooseAgent} onAction={update} />)}</ul>}</section>
@@ -192,7 +197,20 @@ export function VendorWorkspace({ party, pending, onAction }: { party: string; p
 
     {view === 'settings' && <div className="vendor-settings-workspace">
       <section className="company-panel"><div className="section-heading"><h2>Company login</h2><span className={`tag ${state.issuing ? '' : 'tag-danger'}`}>{state.issuing ? 'Issuing enabled' : 'Paused'}</span></div><p className="muted vendor-section-copy">Your company login verifies employees and issues agent identities. Pause it to prevent new badges.</p><button type="button" className={`button ${state.issuing ? 'button-danger' : 'button-primary'}`} disabled={pending} onClick={() => void update('Update company login', () => state.issuing ? vendorApi.stopIssuing(party) : vendorApi.resumeIssuing(party))}>{state.issuing ? 'Pause issuing' : 'Resume issuing'}</button><p className="small muted vendor-settings-note">Existing badges last up to 15 minutes. Your client can stop them immediately.</p><details className="vendor-login-details"><summary>Connection details</summary><dl className="access-terms"><div><dt>Identity provider</dt><dd>{state.issuer}</dd></div><div><dt>Credentials issued</dt><dd>{state.id_jags_issued}</dd></div><div><dt>Allowed actions</dt><dd>{(access?.scope ?? []).map((scope) => ABILITY[scope] ?? scope).join(', ') || 'None'}</dd></div></dl></details></section>
-      <section className="company-panel"><div className="section-heading"><h2>Employees</h2><span className="count">{state.users.length}</span></div><p className="muted vendor-section-copy">These employees may run agents for {party}.</p><ul className="vendor-employee-list">{state.users.map((employee) => <li key={employee}><span className="avatar">{employee.slice(0, 2).toUpperCase()}</span>{employee}</li>)}</ul><form onSubmit={(event) => { event.preventDefault(); if (!pending && newUser.includes('@')) void update('Add employee', async () => { await vendorApi.addUser(party, newUser.trim()); setNewUser('') }) }}><label className="field-label" htmlFor="vendor-new-user">Employee email</label><div className="inline-field"><input id="vendor-new-user" type="email" value={newUser} placeholder="person@company.com" disabled={pending} onChange={(event) => setNewUser(event.target.value)} /><button type="submit" className="button" disabled={pending || !newUser.includes('@')}>Add employee</button></div></form></section>
+      <section className="company-panel"><div className="section-heading"><h2>Employees</h2><span className="count">{state.users.length}</span></div><p className="muted vendor-section-copy">{cognito ? <>Employees sign in with {party}’s company login (Amazon Cognito pool <code>{state.sso?.pool_id}</code>). Only signed-in employees can start agents.</> : <>These employees may run agents for {party}.</>}</p><ul className="vendor-employee-list">{state.users.map((employee) => <li key={employee}><span className="avatar">{employee.slice(0, 2).toUpperCase()}</span>{employee}{cognito && <span className={`tag ${signedIn.has(employee) ? '' : 'tag-muted'}`}>{signedIn.has(employee) ? 'Signed in' : 'Not signed in'}</span>}</li>)}</ul>{cognito ? <EmployeeSignIn party={party} users={state.users} pending={pending} onAction={update} /> : <form onSubmit={(event) => { event.preventDefault(); if (!pending && newUser.includes('@')) void update('Add employee', async () => { await vendorApi.addUser(party, newUser.trim()); setNewUser('') }) }}><label className="field-label" htmlFor="vendor-new-user">Employee email</label><div className="inline-field"><input id="vendor-new-user" type="email" value={newUser} placeholder="person@company.com" disabled={pending} onChange={(event) => setNewUser(event.target.value)} /><button type="submit" className="button" disabled={pending || !newUser.includes('@')}>Add employee</button></div></form>}</section>
     </div>}
   </div>
+}
+
+/** Real sign-in against the vendor's Amazon Cognito user pool (via the vendor runtime). */
+function EmployeeSignIn({ party, users, pending, onAction, compact = false }: { party: string; users: string[]; pending: boolean; onAction: ActionHandler; compact?: boolean }) {
+  const [email, setEmail] = useState(users[0] ?? '')
+  const [password, setPassword] = useState('')
+  const who = users.includes(email) || !compact ? email : users[0] ?? ''
+  return <form className={`vendor-signin ${compact ? 'is-compact' : ''}`} onSubmit={(event) => { event.preventDefault(); if (!pending && who && password) void onAction('Sign in', async () => { await vendorApi.signIn(party, who, password); setPassword('') }) }}>
+    {!compact && <><label className="field-label" htmlFor={`signin-email-${party}`}>Sign in with {party}’s company login</label>
+      <input id={`signin-email-${party}`} type="email" autoComplete="username" value={email} placeholder="person@company.com" disabled={pending} onChange={(event) => setEmail(event.target.value)} /></>}
+    <div className="inline-field"><input type="password" aria-label={`Password for ${who}`} autoComplete="current-password" value={password} placeholder="Password" disabled={pending} onChange={(event) => setPassword(event.target.value)} /><button type="submit" className="button button-primary" disabled={pending || !who || !password}><Icon name="key" />Sign in</button></div>
+    {!compact && <p className="small muted">Checked by Amazon Cognito. Your company runtime passes it to Cognito and never stores it.</p>}
+  </form>
 }

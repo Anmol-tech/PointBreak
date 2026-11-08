@@ -94,7 +94,7 @@ export interface VendorAgent {
 export interface VendorEntry {
   id: number
   ts: number
-  kind: 'badge' | 'call' | 'onboard'
+  kind: 'badge' | 'call' | 'onboard' | 'signin'
   party: string | null
   agent: string
   user?: string
@@ -129,6 +129,7 @@ export interface VendorState {
   id_jags_issued: number
   users: string[]
   deal: string
+  sso?: { provider: string; pool_id: string | null; signed_in: string[] }
   agents: VendorAgent[]
   history: VendorEntry[]
 }

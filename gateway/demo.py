@@ -51,7 +51,10 @@ def _onboard():
 
 def _stolen():
     from scripts.stolen_token_attack import run
-    results = run("contracts-reviewer")
+    try:
+        results = run("contracts-reviewer")
+    except httpx.HTTPStatusError:
+        raise RuntimeError("unknown agent contracts-reviewer")
     blocked = sum(1 for _, denied in results if denied)
     return f"Attacker replayed contracts-reviewer's badge twice; {blocked} of 2 attempts blocked"
 

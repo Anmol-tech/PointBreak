@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from common.cognito import load_config
 from common.config import ROOT, load
 from common.dpop import make_proof, new_key
 from party.idp import IdPError, PartyIdP
@@ -29,8 +30,12 @@ TOKEN_URL = f"{cfg['gateway_url']}/token"
 MCP_URL = f"{cfg['gateway_url']}/mcp"
 
 
+cognito = load_config()
+
+
 def configured_idps() -> dict[str, PartyIdP]:
-    return {name: PartyIdP(cfg, name, p["users"]) for name, p in cfg["vendors"].items()}
+    return {name: PartyIdP(cfg, name, p["users"], (cognito or {}).get("vendors", {}).get(name), (cognito or {}).get("region"))
+            for name, p in cfg["vendors"].items()}
 
 
 idps = configured_idps()
@@ -281,6 +286,21 @@ async def preview_invite(code: str):
     return JSONResponse(resp.json(), status_code=resp.status_code)
 
 
+@app.post("/api/vendor/{party}/signin")
+async def employee_sign_in(party: str, request: Request):
+    """An employee signs in with the vendor's company login (Amazon Cognito when configured)."""
+    if party not in idps:
+        return JSONResponse({"error": f"unknown vendor {party}"}, status_code=404)
+    b = await request.json()
+    try:
+        who = await run_in_threadpool(idps[party].sign_in, (b.get("email") or "").strip(), b.get("password") or "")
+    except IdPError as e:
+        return JSONResponse({"error": str(e)}, status_code=401)
+    record(kind="signin", party=party, agent="", user=who["email"], decision="allowed",
+           reason=f"{who['email']} signed in with {party}'s company login (Amazon Cognito)")
+    return who
+
+
 @app.post("/api/vendor/{party}/users")
 async def add_user(party: str, request: Request):
     if party not in idps:
@@ -289,7 +309,7 @@ async def add_user(party: str, request: Request):
     if "@" not in user:
         return JSONResponse({"error": "Enter an employee email"}, status_code=400)
     idps[party].users.add(user)
-    return {"users": sorted(idps[party].users)}
+    return {"users": idps[party].employees()}
 
 
 @app.get("/api/vendors")
@@ -317,7 +337,8 @@ def vendor_state(party: str):
         "issuer": idp.issuer,
         "issuing": idp.issuing,
         "id_jags_issued": idp.issued,
-        "users": sorted(idp.users),
+        "users": idp.employees(),
+        "sso": {"provider": idp.sso, "pool_id": (idp.cognito or {}).get("pool_id"), "signed_in": sorted(idp.sessions)},
         "deal": cfg["deal"],
         "agents": mine,
         "history": [h for h in history if h["party"] == party][-150:],

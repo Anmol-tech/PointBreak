@@ -9,11 +9,13 @@ import httpx
 import jwt
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from common.cognito import CognitoError, load_config
 from common.config import ROOT, issuer_for, load
+from gateway.auth import COOKIE, FalconSSO
 from gateway.bedrock import BedrockError, BedrockWriter
 from gateway.demo import SCENARIOS, DemoRunner
 from gateway.identity import AuthError, Identity
@@ -32,8 +34,32 @@ identity = Identity(cfg, store)
 writer = BedrockWriter(cfg)
 demo = DemoRunner()
 
+sso = FalconSSO(load_config())
+
 app = FastAPI(title="VendorVault gateway")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Called by vendor runtimes, not by Falcon staff: protected by the invite code / limited to one vendor's terms.
+VENDOR_FACING = ("/api/vendors/invite/", "/api/vendors/connect")
+
+
+@app.middleware("http")
+async def require_falcon_sign_in(request: Request, call_next):
+    """With Cognito on, Falcon's owner API needs a signed-in workforce user; changes need falcon-admins."""
+    path = request.url.path
+    if sso.enabled and path.startswith("/api/") and not path.startswith(VENDOR_FACING) and not path.endswith("/terms"):
+        user = sso.user(request.cookies.get(COOKIE))
+        if not user:
+            return JSONResponse({"error": "Sign in with Falcon SSO first", "login": "/auth/login"}, status_code=401)
+        if request.method != "GET" and not user["admin"]:
+            return JSONResponse({"error": f"{user['email']} is signed in but is not in falcon-admins"}, status_code=403)
+        request.state.user = user
+    return await call_next(request)
+
+
+def by(request: Request) -> str:
+    user = getattr(request.state, "user", None)
+    return f" (by {user['email']})" if user else ""
 
 TOOLS = [
     {
@@ -377,7 +403,7 @@ async def invite_vendor(request: Request):
                     contact=(b.get("contact") or "").strip(), status="invited", invite_code=code)
     store.log(kind="vendor", decision="info", party=name, agent=None, chain=[name],
               reason=f"Invited {name} for “{store.parties[name]['purpose'] or 'unspecified work'}”. "
-                     f"Its agents may ask about {', '.join(folders) or 'nothing yet'}. Invite code {code}")
+                     f"Its agents may ask about {', '.join(folders) or 'nothing yet'}. Invite code {code}{by(request)}")
     return {"name": name, "invite_code": code, "status": "invited"}
 
 
@@ -429,7 +455,7 @@ async def connect_vendor(request: Request):
 
 
 @app.post("/api/vendors/{name}/offboard")
-def offboard_vendor(name: str):
+def offboard_vendor(name: str, request: Request):
     if name not in store.parties:
         return JSONResponse({"error": "unknown vendor"}, status_code=404)
     roots = [a["id"] for a in store.agents.values() if a["party"] == name and not a["parent"]]
@@ -439,34 +465,34 @@ def offboard_vendor(name: str):
         store.parties[name].update(status="offboarded", locked=True, lock_reason="vendor offboarded", invite_code=None)
         store.bump()
     store.log(kind="vendor", decision="alert", party=name, agent=None, chain=[name],
-              reason=f"Offboarded {name}: its login is no longer trusted and all its agents were stopped")
+              reason=f"Offboarded {name}: its login is no longer trusted and all its agents were stopped{by(request)}")
     return {"offboarded": name}
 
 
 @app.post("/api/agents/{agent_id}/revoke")
-def revoke(agent_id: str):
+def revoke(agent_id: str, request: Request):
     if agent_id not in store.agents:
         return JSONResponse({"error": "unknown agent"}, status_code=404)
     ids = store.revoke_agent(agent_id, "revoked by data-room owner")
     a = store.agents[agent_id]
     extra = f" and {len(ids) - 1} sub-agent(s)" if len(ids) > 1 else ""
     store.log(kind="revoke", decision="alert", party=a["party"], agent=agent_id,
-              chain=identity.chain_label(agent_id), reason=f"Owner revoked {a['name']}{extra}")
+              chain=identity.chain_label(agent_id), reason=f"Owner revoked {a['name']}{extra}{by(request)}")
     return {"revoked": ids}
 
 
 @app.post("/api/parties/{name}/lock")
-def lock_party(name: str):
+def lock_party(name: str, request: Request):
     store.set_party_lock(name, True, "locked by data-room owner")
     store.log(kind="lock", decision="alert", party=name, agent=None, chain=[name],
-              reason=f"Owner locked every {name} agent out of the deal")
+              reason=f"Owner locked every {name} agent out of the deal{by(request)}")
     return {"locked": name}
 
 
 @app.post("/api/parties/{name}/unlock")
-def unlock_party(name: str):
+def unlock_party(name: str, request: Request):
     store.set_party_lock(name, False, None)
-    store.log(kind="lock", decision="info", party=name, agent=None, chain=[name], reason=f"Owner unlocked {name}")
+    store.log(kind="lock", decision="info", party=name, agent=None, chain=[name], reason=f"Owner unlocked {name}{by(request)}")
     return {"unlocked": name}
 
 
@@ -533,6 +559,46 @@ async def stream(request: Request):
                     yield ": keep-alive\n\n"
             await asyncio.sleep(0.25)
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/auth/me")
+def auth_me(request: Request):
+    if not sso.enabled:
+        return {"enabled": False, "user": None}
+    user = sso.user(request.cookies.get(COOKIE))
+    return {"enabled": True, "provider": "Amazon Cognito", "pool": sso.conf["pool_id"], "user": user}
+
+
+@app.get("/auth/login")
+def auth_login():
+    if not sso.enabled:
+        return RedirectResponse("/")
+    return RedirectResponse(sso.login_url())
+
+
+@app.get("/auth/callback")
+async def auth_callback(code: str = "", state: str = "", error: str = ""):
+    if error or not code:
+        return RedirectResponse(f"/?login_error={error or 'missing_code'}")
+    try:
+        sid = await run_in_threadpool(sso.finish, code, state)
+    except CognitoError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    user = sso.user(sid)
+    store.log(kind="share", decision="info", party=None, agent=None, chain=[],
+              reason=f"{user['email']} signed in to the control center with Falcon SSO (Amazon Cognito)")
+    resp = RedirectResponse("/")
+    resp.set_cookie(COOKIE, sid, httponly=True, samesite="lax", max_age=3600)
+    return resp
+
+
+@app.get("/auth/logout")
+def auth_logout(request: Request):
+    if not sso.enabled:
+        return RedirectResponse("/")
+    resp = RedirectResponse(sso.logout_url(request.cookies.get(COOKIE)))
+    resp.delete_cookie(COOKIE)
+    return resp
 
 
 @app.get("/healthz")
